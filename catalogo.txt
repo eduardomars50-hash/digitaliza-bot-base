@@ -1,18 +1,61 @@
-# Catálogo de servicios y precios
-# Formato libre. El bot usará este archivo como fuente de verdad.
-# Ejemplo:
+# Catálogo oficial de Digitaliza
+# Todos los precios están en pesos mexicanos (MXN), sin IVA salvo indicación.
+# El bot SOLO puede ofrecer lo que aparece aquí.
 
-SERVICIO: Corte de cabello dama
-PRECIO: $250 MXN
-DURACIÓN: 45 minutos
-DESCRIPCIÓN: Corte personalizado + lavado + secado.
+═══════════════════════════════════════════════════════════
+SERVICIO 1: Bot de WhatsApp con IA (Recepcionista Virtual 24/7)
+═══════════════════════════════════════════════════════════
+QUÉ HACE:
+- Responde mensajes automáticamente, 24 horas todos los días.
+- Entiende texto, notas de voz e imágenes.
+- Agenda citas directamente en el calendario del negocio.
+- Da información de servicios, precios, horarios y ubicación.
+- Filtra leads y pasa los casos complejos a un humano.
+- Convive con el WhatsApp normal del dueño (no lo reemplaza).
 
-SERVICIO: Tinte completo
-PRECIO: $800 MXN
-DURACIÓN: 2 horas
-DESCRIPCIÓN: Aplicación de tinte en todo el cabello, incluye tratamiento.
+IDEAL PARA:
+- Salones de belleza, barberías, consultorios médicos y dentales,
+  veterinarias, spas, restaurantes, cualquier negocio de servicio.
 
-SERVICIO: Manicure básico
-PRECIO: $180 MXN
-DURACIÓN: 30 minutos
-DESCRIPCIÓN: Limado, cutícula, esmalte.
+PRECIO SETUP (pago único): $3,500 - $6,000 MXN
+  → Depende de la complejidad del catálogo, integraciones y personalización.
+PRECIO MENSUAL: $1,500 - $4,500 MXN / mes
+  → Depende del volumen de conversaciones y features activas.
+
+═══════════════════════════════════════════════════════════
+SERVICIO 2: App personalizada para tu negocio (PWA)
+═══════════════════════════════════════════════════════════
+QUÉ INCLUYE:
+- App instalable en el teléfono como aplicación nativa (PWA).
+- Calendario de citas con vista diaria, semanal, mensual.
+- Gestión de clientes (fichas, historial, notas).
+- Catálogo de servicios y productos editable.
+- Módulo de cobros y cierre de caja.
+- Asistente de IA interno para el equipo del negocio.
+
+IDEAL PARA:
+- Negocios que ya tienen volumen y quieren centralizar operación
+  en una sola herramienta hecha a su medida.
+
+PRECIO SETUP (pago único): $8,000 - $15,000 MXN
+PRECIO MENSUAL: $3,000 - $6,000 MXN / mes
+
+═══════════════════════════════════════════════════════════
+SERVICIO 3: Página web profesional
+═══════════════════════════════════════════════════════════
+QUÉ INCLUYE:
+- Diseño moderno, rápido y optimizado para móvil.
+- Secciones: inicio, servicios, galería, contacto, WhatsApp directo.
+- SEO local básico para aparecer en búsquedas de Mérida.
+
+PRECIO (pago único): $3,000 - $8,000 MXN
+  → Según número de secciones y funcionalidades.
+
+═══════════════════════════════════════════════════════════
+CONTACTO / SIGUIENTE PASO
+═══════════════════════════════════════════════════════════
+- Web: digitaliza.mx
+- Ubicación: Mérida, Yucatán
+- Horario de asesores humanos: L-V 9:00-19:00, Sáb 10:00-14:00
+- El bot responde 24/7. Si se necesita asesor humano, agenda el
+  contacto y avisa que responderán en horario laboral.
