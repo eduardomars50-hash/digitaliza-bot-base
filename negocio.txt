@@ -1,0 +1,7 @@
+NOMBRE: [Nombre del negocio]
+TIPO: [salón de belleza / veterinaria / consultorio médico / etc.]
+DIRECCIÓN: [Calle, número, colonia, ciudad]
+TELÉFONO: [+52 999 XXX XXXX]
+HORARIO: [Lunes a Viernes 9:00-19:00, Sábado 9:00-14:00]
+DUEÑO: [Nombre del dueño]
+NOTAS: [Cualquier detalle extra: estacionamiento, formas de pago, políticas, etc.]

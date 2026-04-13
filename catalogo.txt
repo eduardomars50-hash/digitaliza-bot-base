@@ -1,0 +1,18 @@
+# Catálogo de servicios y precios
+# Formato libre. El bot usará este archivo como fuente de verdad.
+# Ejemplo:
+
+SERVICIO: Corte de cabello dama
+PRECIO: $250 MXN
+DURACIÓN: 45 minutos
+DESCRIPCIÓN: Corte personalizado + lavado + secado.
+
+SERVICIO: Tinte completo
+PRECIO: $800 MXN
+DURACIÓN: 2 horas
+DESCRIPCIÓN: Aplicación de tinte en todo el cabello, incluye tratamiento.
+
+SERVICIO: Manicure básico
+PRECIO: $180 MXN
+DURACIÓN: 30 minutos
+DESCRIPCIÓN: Limado, cutícula, esmalte.
