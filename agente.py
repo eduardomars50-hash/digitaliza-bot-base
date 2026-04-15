@@ -690,6 +690,14 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             log.warning("Mensaje sin from/to: %s", msg)
             return
 
+        # ─── FILTRO MULTI-TENANT DE YCLOUD ───
+        # YCloud manda webhooks de TODOS los números del portfolio. Solo procesamos
+        # los mensajes que fueron enviados AL número oficial de Digitaliza (BOT_PHONE).
+        if BOT_PHONE and _normalizar_phone(to_number) != _normalizar_phone(BOT_PHONE):
+            log.info("[SKIP] Mensaje para %s (no es BOT_PHONE=%s); ignorado",
+                     to_number, BOT_PHONE)
+            return
+
         log.info("[IN  %s -> %s] type=%s", from_number, to_number, tipo)
 
         # ─── MODO ADMIN ───
