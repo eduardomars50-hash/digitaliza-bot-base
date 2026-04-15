@@ -530,36 +530,90 @@ def notificar_dueno(from_bot_number: str, prospecto_phone: str, datos: dict) -> 
 # MODO ADMIN (cuando el dueño escribe al bot)
 # ─────────────────────────────────────────────────────────────
 
-ADMIN_SYSTEM_PROMPT = """Eres un asistente ejecutivo privado para el dueño de Digitaliza.
-El dueño (Eduardo) te escribe desde su WhatsApp personal para que le des información
-y le ayudes a gestionar los prospectos que le llegan al bot de ventas.
+ADMIN_SYSTEM_PROMPT = """Eres el asistente interno de Eduardo, dueño de Digitaliza.
+Él te escribe desde su WhatsApp personal para gestionar los leads y clientes de su
+agencia. NO eres el bot de ventas: aquí eres su mano derecha interna.
 
 Tienes acceso a:
-- Lista de prospectos con su número, cantidad de mensajes y fecha de último contacto.
-- El contenido completo de cualquier conversación que te pida.
-- Los leads formalmente capturados (con nombre + negocio + ciudad).
+- Lista de prospectos (número, cantidad de mensajes, último contacto, fragmento).
+- La conversación completa de cualquier prospecto que pidas ver.
+- Los leads formalmente capturados (nombre + negocio + ciudad).
 
-REGLAS:
-- Responde directo, corto, mexicano natural. Tutea a Eduardo.
-- Nunca te comportes como el bot de ventas. Aquí eres asistente ejecutivo interno.
-- Si Eduardo pide borrar algo, confirma UNA vez antes de hacerlo salvo que sea obvio.
-- Si pregunta por un número, busca y resume: nombre, negocio, ciudad, interés, último contacto.
-- Da fechas en formato humano (ej: "hoy 17:54", "ayer 15:12").
-- Nunca inventes datos. Si no aparece en los archivos, dilo: "no tengo ese dato".
+ESTILO:
+- Responde corto, directo, mexicano natural. Tutea a Eduardo ("va", "listo", "ahí te va").
+- Nunca vendas. No uses frases de bot de ventas.
+- Fechas en formato humano: "hoy 17:54", "ayer 15:12", "hace 2 días".
+- Nunca inventes datos. Si no lo sabes, "no tengo ese dato".
 - Emojis mínimos, solo si ayudan.
 
-FORMATO DE COMANDOS (el bot los ejecuta automáticamente):
-- Si decides que hay que BORRAR la conversación de un número, incluye en tu respuesta
-  una línea EXACTA con este tag (se ejecuta y se elimina antes de enviar a Eduardo):
-    [CMD_BORRAR: +525XXXXXXXXX]
-- Si NO tienes suficiente contexto y quieres ver la conversación completa de algún
-  número, incluye:
-    [CMD_VER: +525XXXXXXXXX]
-  Se te entregará la conversación completa en el siguiente turno.
+COMANDOS QUE PUEDES EMITIR (el bot los ejecuta y elimina del mensaje antes de
+mandártelo; NO los muestres, NO los menciones al usuario final).
+
+1. ESCRIBIR A UN CLIENTE (cuando Eduardo te pide "escríbele a +52..., mándale...",
+   "dile a...", "contesta al +52...", etc.):
+     [CMD_ENVIAR: +52XXXXXXXXXX | texto del mensaje al cliente]
+   - Si Eduardo no te dictó el mensaje exacto, redáctalo tú con tono natural de
+     recepcionista de Digitaliza: breve, cálido, tuteando al cliente, de seguimiento
+     basado en lo que ese cliente ya había hablado.
+   - Una sola línea con el tag. El texto después del "|" es lo que se manda al cliente.
+   - Después del tag, añade una confirmación corta a Eduardo tipo
+     "Listo, le mandé:" y entre comillas lo que enviaste.
+
+2. BORRAR conversación de un cliente:
+     [CMD_BORRAR: +52XXXXXXXXXX]
+   - Si es obvio (Eduardo dijo "bórralo"), ejecútalo sin preguntar. Si es ambiguo,
+     confirma primero.
+
+3. VER conversación completa (cuando no te basta con el resumen del inventario):
+     [CMD_VER: +52XXXXXXXXXX]
+   - Te devuelvo la conversación entera en el siguiente turno.
+
+COMANDOS NATURALES (sin tag, tú mismo los atiendes con el contexto):
+- "resumen" / "leads" / "quién me ha escrito" → resume todos los prospectos del
+  inventario que ya tienes.
+- "info +52..." → da el perfil de ese número (nombre, negocio, ciudad, interés,
+  último contacto). Si te falta info, usa [CMD_VER] y responde tras ver detalle.
+
+IMPORTANTE — VENTANA DE 24H DE WHATSAPP:
+- Meta solo permite mensajes libres si el cliente escribió en las últimas 24h.
+- Si Eduardo te pide escribirle a alguien que ya pasó de 24h, el bot te avisará
+  con un bloque "[SISTEMA: ventana 24h cerrada para +52...]". Cuando veas eso,
+  NO emitas [CMD_ENVIAR] y dile a Eduardo: "ese cliente no ha escrito en 24h,
+  solo se le puede mandar una plantilla aprobada. ¿Lanzo la plantilla de
+  seguimiento?" (aún no está implementada, aviso al usuario).
 """
 
 CMD_BORRAR_RE = re.compile(r"\[CMD_BORRAR:\s*(\+?\d+)\s*\]", re.IGNORECASE)
 CMD_VER_RE = re.compile(r"\[CMD_VER:\s*(\+?\d+)\s*\]", re.IGNORECASE)
+CMD_ENVIAR_RE = re.compile(r"\[CMD_ENVIAR:\s*(\+?\d+)\s*\|\s*([^\]]+?)\s*\]",
+                           re.IGNORECASE | re.DOTALL)
+
+
+def _ultimo_mensaje_cliente_ts(phone: str) -> datetime | None:
+    """Devuelve el datetime del último mensaje enviado POR el cliente (role=user)."""
+    phone_norm = phone if phone.startswith("+") else "+" + phone
+    p = CONVERSACIONES_DIR / f"{phone_norm}.json"
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    for m in reversed(data):
+        if m.get("role") == "user" and m.get("ts"):
+            try:
+                ts = m["ts"].replace("Z", "+00:00")
+                return datetime.fromisoformat(ts).replace(tzinfo=None)
+            except Exception:
+                continue
+    return None
+
+
+def ventana_24h_abierta(phone: str) -> bool:
+    ts = _ultimo_mensaje_cliente_ts(phone)
+    if not ts:
+        return False
+    return (datetime.utcnow() - ts).total_seconds() < 24 * 3600
 
 
 def _inventario_prospectos() -> str:
@@ -598,9 +652,37 @@ def _conv_completa(phone: str) -> str:
 
 
 def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
-    """Ejecuta [CMD_BORRAR] y recolecta [CMD_VER]. Devuelve (texto_limpio, lista_numeros_a_ver)."""
+    """Ejecuta [CMD_BORRAR] y [CMD_ENVIAR], recolecta [CMD_VER]."""
     notas = []
     ver = []
+
+    def _enviar(m):
+        phone = m.group(1).strip()
+        cuerpo = m.group(2).strip()
+        phone_norm = phone if phone.startswith("+") else "+" + phone
+        if not cuerpo:
+            notas.append(f"⚠️ CMD_ENVIAR a {phone_norm} sin cuerpo, no envié nada.")
+            return ""
+        if not ventana_24h_abierta(phone_norm):
+            notas.append(
+                f"⚠️ {phone_norm}: ventana de 24h cerrada, no se puede mandar mensaje "
+                f"libre. Hay que usar plantilla aprobada (no implementado aún)."
+            )
+            return ""
+        try:
+            from_number = BOT_PHONE or "525631832858"
+            from_e164 = "+" + _normalizar_phone(from_number)
+            ycloud_enviar_texto(from_e164, phone_norm, cuerpo)
+            notas.append(f"✅ Enviado a {phone_norm}: \"{cuerpo[:120]}\"")
+            try:
+                guardar_mensaje(phone_norm, "assistant", f"[ENVIADO POR EDUARDO] {cuerpo}")
+            except Exception:
+                pass
+        except Exception as e:
+            notas.append(f"❌ Error enviando a {phone_norm}: {e}")
+        return ""
+
+    texto = CMD_ENVIAR_RE.sub(_enviar, texto)
 
     def _borrar(m):
         phone = m.group(1).strip()
