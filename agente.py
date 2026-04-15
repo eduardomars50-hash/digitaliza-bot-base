@@ -527,6 +527,144 @@ def notificar_dueno(from_bot_number: str, prospecto_phone: str, datos: dict) -> 
 
 
 # ─────────────────────────────────────────────────────────────
+# MODO ADMIN (cuando el dueño escribe al bot)
+# ─────────────────────────────────────────────────────────────
+
+ADMIN_SYSTEM_PROMPT = """Eres un asistente ejecutivo privado para el dueño de Digitaliza.
+El dueño (Eduardo) te escribe desde su WhatsApp personal para que le des información
+y le ayudes a gestionar los prospectos que le llegan al bot de ventas.
+
+Tienes acceso a:
+- Lista de prospectos con su número, cantidad de mensajes y fecha de último contacto.
+- El contenido completo de cualquier conversación que te pida.
+- Los leads formalmente capturados (con nombre + negocio + ciudad).
+
+REGLAS:
+- Responde directo, corto, mexicano natural. Tutea a Eduardo.
+- Nunca te comportes como el bot de ventas. Aquí eres asistente ejecutivo interno.
+- Si Eduardo pide borrar algo, confirma UNA vez antes de hacerlo salvo que sea obvio.
+- Si pregunta por un número, busca y resume: nombre, negocio, ciudad, interés, último contacto.
+- Da fechas en formato humano (ej: "hoy 17:54", "ayer 15:12").
+- Nunca inventes datos. Si no aparece en los archivos, dilo: "no tengo ese dato".
+- Emojis mínimos, solo si ayudan.
+
+FORMATO DE COMANDOS (el bot los ejecuta automáticamente):
+- Si decides que hay que BORRAR la conversación de un número, incluye en tu respuesta
+  una línea EXACTA con este tag (se ejecuta y se elimina antes de enviar a Eduardo):
+    [CMD_BORRAR: +525XXXXXXXXX]
+- Si NO tienes suficiente contexto y quieres ver la conversación completa de algún
+  número, incluye:
+    [CMD_VER: +525XXXXXXXXX]
+  Se te entregará la conversación completa en el siguiente turno.
+"""
+
+CMD_BORRAR_RE = re.compile(r"\[CMD_BORRAR:\s*(\+?\d+)\s*\]", re.IGNORECASE)
+CMD_VER_RE = re.compile(r"\[CMD_VER:\s*(\+?\d+)\s*\]", re.IGNORECASE)
+
+
+def _inventario_prospectos() -> str:
+    lineas = []
+    for f in sorted(CONVERSACIONES_DIR.glob("*.json")):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        n = len(data)
+        ultimo_ts = data[-1].get("ts", "") if data else ""
+        primer = next((m["content"][:40] for m in data if m["role"] == "user"), "")
+        ultimo_u = next((m["content"][:80] for m in reversed(data) if m["role"] == "user"), "")
+        lineas.append(f"- {f.stem} | {n} msgs | último: {ultimo_ts} | último_user: {ultimo_u!r} | primer: {primer!r}")
+    leads = []
+    for f in sorted(LEADS_DIR.glob("*.json")):
+        try:
+            leads.append(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    txt = "PROSPECTOS:\n" + ("\n".join(lineas) if lineas else "(ninguno)")
+    if leads:
+        txt += "\n\nLEADS CAPTURADOS:\n" + json.dumps(leads, ensure_ascii=False, indent=2)
+    else:
+        txt += "\n\nLEADS CAPTURADOS: ninguno todavía"
+    return txt
+
+
+def _conv_completa(phone: str) -> str:
+    phone_norm = phone if phone.startswith("+") else "+" + phone
+    p = CONVERSACIONES_DIR / f"{phone_norm}.json"
+    if not p.exists():
+        return f"(no encontré conversación para {phone_norm})"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    return "\n".join(f"[{m.get('ts','')}] {m['role'].upper()}: {m['content']}" for m in data)
+
+
+def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
+    """Ejecuta [CMD_BORRAR] y recolecta [CMD_VER]. Devuelve (texto_limpio, lista_numeros_a_ver)."""
+    notas = []
+    ver = []
+
+    def _borrar(m):
+        phone = m.group(1).strip()
+        phone_norm = phone if phone.startswith("+") else "+" + phone
+        conv = CONVERSACIONES_DIR / f"{phone_norm}.json"
+        lead = LEADS_DIR / f"{phone_norm}.json"
+        removed = []
+        for p in (conv, lead):
+            if p.exists():
+                p.unlink()
+                removed.append(p.name)
+        notas.append(f"✅ Borrado {phone_norm}: {', '.join(removed) or 'nada que borrar'}")
+        return ""
+
+    texto = CMD_BORRAR_RE.sub(_borrar, texto)
+
+    for m in CMD_VER_RE.finditer(texto):
+        ver.append(m.group(1).strip())
+    texto = CMD_VER_RE.sub("", texto)
+
+    if notas:
+        texto = (texto.strip() + "\n\n" + "\n".join(notas)).strip()
+    return texto.strip(), ver
+
+
+def procesar_mensaje_admin(texto_usuario: str, to_number: str) -> None:
+    """Eduardo escribió desde OWNER_PHONE. Modo asistente ejecutivo."""
+    log.info("[ADMIN] Consulta del dueño: %s", texto_usuario[:120])
+
+    contexto = _inventario_prospectos()
+    modelo = genai.GenerativeModel(
+        model_name=GEMINI_MODEL_NAME,
+        system_instruction=ADMIN_SYSTEM_PROMPT,
+        safety_settings=SAFETY_SETTINGS,
+        generation_config=GENERATION_CONFIG,
+    )
+
+    mensaje = f"CONTEXTO ACTUAL:\n{contexto}\n\nPREGUNTA DE EDUARDO:\n{texto_usuario}"
+    resp = modelo.generate_content(mensaje)
+    respuesta = (resp.text or "").strip()
+
+    respuesta, numeros_ver = _ejecutar_comandos_admin(respuesta)
+
+    # Segundo pase si pidió ver alguna conversación completa
+    if numeros_ver:
+        bloques = []
+        for num in numeros_ver:
+            bloques.append(f"--- CONVERSACIÓN {num} ---\n{_conv_completa(num)}")
+        extra = "\n\n".join(bloques)
+        segundo = modelo.generate_content(
+            f"CONTEXTO ACTUAL:\n{contexto}\n\n"
+            f"CONVERSACIONES COMPLETAS SOLICITADAS:\n{extra}\n\n"
+            f"PREGUNTA ORIGINAL:\n{texto_usuario}"
+        )
+        respuesta = (segundo.text or "").strip()
+        respuesta, _ = _ejecutar_comandos_admin(respuesta)
+
+    if not respuesta:
+        respuesta = "(sin respuesta del asistente)"
+
+    ycloud_enviar_texto(to_number, OWNER_PHONE, respuesta)
+
+
+# ─────────────────────────────────────────────────────────────
 # Procesamiento de un mensaje entrante YCloud
 # ─────────────────────────────────────────────────────────────
 
@@ -553,6 +691,22 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             return
 
         log.info("[IN  %s -> %s] type=%s", from_number, to_number, tipo)
+
+        # ─── MODO ADMIN ───
+        # Si el dueño escribe al bot desde OWNER_PHONE, entra al asistente ejecutivo
+        # interno en vez del flujo de ventas.
+        if OWNER_PHONE and _normalizar_phone(from_number) == _normalizar_phone(OWNER_PHONE):
+            if tipo == "text":
+                cuerpo = (msg.get("text") or {}).get("body", "").strip()
+                if cuerpo:
+                    procesar_mensaje_admin(cuerpo, to_number)
+                return
+            # audios / imágenes del dueño: respuesta corta indicando el modo admin
+            ycloud_enviar_texto(
+                to_number, OWNER_PHONE,
+                "(Modo admin solo soporta texto por ahora. Escríbeme tu pregunta.)"
+            )
+            return
 
         entrada_usuario = None
         texto_guardar = ""
