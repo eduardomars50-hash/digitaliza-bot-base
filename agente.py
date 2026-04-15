@@ -36,6 +36,7 @@ GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 PORT = int(os.environ.get("PORT", "5000"))
 OWNER_PHONE = os.environ.get("OWNER_PHONE", "525635849043")
+BOT_PHONE = os.environ.get("BOT_PHONE", "525631832858")
 
 CONVERSACIONES_DIR = DATA_DIR / "conversaciones"
 CITAS_DIR = DATA_DIR / "citas"
@@ -492,11 +493,27 @@ def extraer_lead(texto: str) -> tuple[str, dict | None]:
     return limpio, datos
 
 
+def _normalizar_phone(p: str) -> str:
+    return "".join(c for c in (p or "") if c.isdigit())
+
+
 def notificar_dueno(from_bot_number: str, prospecto_phone: str, datos: dict) -> None:
-    """Manda resumen al dueño desde el mismo número del bot."""
+    """Manda resumen al dueño desde el número OFICIAL del bot (BOT_PHONE).
+
+    Si el prospecto escribió justo desde el número del dueño (caso de prueba),
+    no se notifica para evitar que Eduardo se mande mensajes a sí mismo.
+    """
     if not OWNER_PHONE:
         log.warning("OWNER_PHONE no configurado; no se notifica lead")
         return
+    if _normalizar_phone(prospecto_phone) == _normalizar_phone(OWNER_PHONE):
+        log.info("[LEAD] Prospecto == dueño (%s); omito auto-notificación", OWNER_PHONE)
+        return
+
+    # Siempre usar BOT_PHONE como 'from' si está configurado.
+    # Fallback: el número al que el prospecto escribió.
+    from_number = BOT_PHONE or from_bot_number
+
     nombre = datos.get("nombre", "(sin nombre)")
     negocio = datos.get("negocio", "(sin negocio)")
     ciudad = datos.get("ciudad", "(sin ciudad)")
@@ -504,9 +521,9 @@ def notificar_dueno(from_bot_number: str, prospecto_phone: str, datos: dict) -> 
         f"🆕 Nuevo lead: {nombre}, {negocio}, {ciudad}.\n"
         f"Número: {prospecto_phone}"
     )
-    log.info("[LEAD] Notificando al dueño %s: %s / %s / %s",
-             OWNER_PHONE, nombre, negocio, ciudad)
-    ycloud_enviar_texto(from_bot_number, OWNER_PHONE, msg)
+    log.info("[LEAD] Notificando al dueño %s desde %s: %s / %s / %s",
+             OWNER_PHONE, from_number, nombre, negocio, ciudad)
+    ycloud_enviar_texto(from_number, OWNER_PHONE, msg)
 
 
 # ─────────────────────────────────────────────────────────────
