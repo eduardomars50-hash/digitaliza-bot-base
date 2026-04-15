@@ -42,7 +42,8 @@ CONVERSACIONES_DIR = DATA_DIR / "conversaciones"
 CITAS_DIR = DATA_DIR / "citas"
 MEDIA_DIR = DATA_DIR / "media"
 LEADS_DIR = DATA_DIR / "leads"
-for d in (CONVERSACIONES_DIR, CITAS_DIR, MEDIA_DIR, LEADS_DIR):
+PERFILES_DIR = DATA_DIR / "perfiles"
+for d in (CONVERSACIONES_DIR, CITAS_DIR, MEDIA_DIR, LEADS_DIR, PERFILES_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 MAX_HISTORIAL = 50
@@ -258,6 +259,13 @@ def guardar_mensaje(phone: str, role: str, content: str) -> None:
             json.dumps(historial, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        # Invalida caché de perfil al guardar nuevo mensaje de usuario
+        if role == "user":
+            safe = "".join(c for c in phone if c.isalnum() or c in "+-_")
+            try:
+                (DATA_DIR / "perfiles" / f"{safe}.json").unlink(missing_ok=True)
+            except Exception:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -616,6 +624,69 @@ def ventana_24h_abierta(phone: str) -> bool:
     return (datetime.utcnow() - ts).total_seconds() < 24 * 3600
 
 
+_PERFIL_PROMPT = (
+    "Extrae del siguiente historial de WhatsApp un perfil compacto del cliente. "
+    "Devuelve SOLO JSON válido con estas llaves (usa \"desconocido\" si no aparece):\n"
+    "{\"nombre\": ..., \"negocio\": ..., \"tipo_negocio\": ..., "
+    "\"ciudad\": ..., \"interes\": ...}\n"
+    "- negocio = nombre propio del negocio (ej 'Barber Joe').\n"
+    "- tipo_negocio = giro general (ej 'barbería', 'panadería artesanal', 'consultorio dental').\n"
+    "- interes = 1 línea con qué servicio o info le interesa.\n"
+    "Responde SOLO el JSON, sin texto adicional, sin markdown."
+)
+
+
+def _perfil_cliente(phone: str) -> dict:
+    """Perfil cacheado en /data/perfiles/<phone>.json. Regenera si el conv es más nuevo."""
+    phone_norm = phone if phone.startswith("+") else "+" + phone
+    conv_path = CONVERSACIONES_DIR / f"{phone_norm}.json"
+    perfil_path = PERFILES_DIR / f"{phone_norm}.json"
+    if not conv_path.exists():
+        return {}
+
+    if perfil_path.exists() and perfil_path.stat().st_mtime >= conv_path.stat().st_mtime:
+        try:
+            return json.loads(perfil_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    try:
+        data = json.loads(conv_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    transcript = "\n".join(
+        f"{m['role'].upper()}: {m['content']}" for m in data[-40:]
+    )
+
+    try:
+        modelo = genai.GenerativeModel(
+            model_name=GEMINI_MODEL_NAME,
+            generation_config={
+                "temperature": 0.0,
+                "response_mime_type": "application/json",
+            },
+            safety_settings=SAFETY_SETTINGS,
+        )
+        resp = modelo.generate_content(f"{_PERFIL_PROMPT}\n\nCONVERSACIÓN:\n{transcript}")
+        perfil = json.loads((resp.text or "{}").strip())
+    except Exception:
+        log.exception("Fallo extrayendo perfil de %s", phone_norm)
+        perfil = {
+            "nombre": "desconocido", "negocio": "desconocido",
+            "tipo_negocio": "desconocido", "ciudad": "desconocido",
+            "interes": "desconocido",
+        }
+
+    try:
+        perfil_path.write_text(json.dumps(perfil, ensure_ascii=False, indent=2),
+                               encoding="utf-8")
+    except Exception:
+        log.exception("Fallo guardando perfil de %s", phone_norm)
+
+    return perfil
+
+
 def _inventario_prospectos() -> str:
     lineas = []
     for f in sorted(CONVERSACIONES_DIR.glob("*.json")):
@@ -625,20 +696,31 @@ def _inventario_prospectos() -> str:
             continue
         n = len(data)
         ultimo_ts = data[-1].get("ts", "") if data else ""
-        primer = next((m["content"][:40] for m in data if m["role"] == "user"), "")
         ultimo_u = next((m["content"][:80] for m in reversed(data) if m["role"] == "user"), "")
-        lineas.append(f"- {f.stem} | {n} msgs | último: {ultimo_ts} | último_user: {ultimo_u!r} | primer: {primer!r}")
+        perfil = _perfil_cliente(f.stem)
+        nombre = perfil.get("nombre", "?")
+        negocio = perfil.get("negocio", "?")
+        tipo = perfil.get("tipo_negocio", "?")
+        ciudad = perfil.get("ciudad", "?")
+        interes = perfil.get("interes", "?")
+        lineas.append(
+            f"- {f.stem} | nombre={nombre} | negocio={negocio} | tipo={tipo} | "
+            f"ciudad={ciudad} | interés={interes} | {n} msgs | último: {ultimo_ts} | "
+            f"último_user: {ultimo_u!r}"
+        )
+
     leads = []
     for f in sorted(LEADS_DIR.glob("*.json")):
         try:
             leads.append(json.loads(f.read_text(encoding="utf-8")))
         except Exception:
             pass
-    txt = "PROSPECTOS:\n" + ("\n".join(lineas) if lineas else "(ninguno)")
+
+    txt = "CLIENTES ACTIVOS:\n" + ("\n".join(lineas) if lineas else "(ninguno)")
     if leads:
-        txt += "\n\nLEADS CAPTURADOS:\n" + json.dumps(leads, ensure_ascii=False, indent=2)
+        txt += "\n\nLEADS FORMALMENTE CAPTURADOS:\n" + json.dumps(leads, ensure_ascii=False, indent=2)
     else:
-        txt += "\n\nLEADS CAPTURADOS: ninguno todavía"
+        txt += "\n\nLEADS FORMALMENTE CAPTURADOS: ninguno todavía"
     return txt
 
 
