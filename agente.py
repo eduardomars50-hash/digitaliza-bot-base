@@ -7,6 +7,7 @@ Transcripción de audio: Groq Whisper large-v3.
 
 import os
 import io
+import re
 import json
 import time
 import traceback
@@ -34,11 +35,13 @@ YCLOUD_VERIFY_TOKEN = os.environ.get("YCLOUD_WEBHOOK_VERIFY_TOKEN", "digitaliza2
 GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 PORT = int(os.environ.get("PORT", "5000"))
+OWNER_PHONE = os.environ.get("OWNER_PHONE", "525635849043")
 
 CONVERSACIONES_DIR = DATA_DIR / "conversaciones"
 CITAS_DIR = DATA_DIR / "citas"
 MEDIA_DIR = DATA_DIR / "media"
-for d in (CONVERSACIONES_DIR, CITAS_DIR, MEDIA_DIR):
+LEADS_DIR = DATA_DIR / "leads"
+for d in (CONVERSACIONES_DIR, CITAS_DIR, MEDIA_DIR, LEADS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 MAX_HISTORIAL = 50
@@ -46,6 +49,7 @@ CONTEXTO_DEFAULT = 5
 CONTEXTO_EXTENDIDO = 20
 MAX_CHARS_MENSAJE = 1500
 SENAL_MAS_CONTEXTO = "[NECESITO_MAS_CONTEXTO]"
+LEAD_TAG_RE = re.compile(r"\[LEAD_CAPTURADO:([^\]]+)\]", re.IGNORECASE)
 
 YCLOUD_SEND_URL = "https://api.ycloud.com/v2/whatsapp/messages"
 YCLOUD_MEDIA_URL = "https://api.ycloud.com/v2/whatsapp/media"
@@ -91,8 +95,19 @@ SYSTEM_PROMPT_TEMPLATE = """Eres el asistente virtual de {nombre_negocio}, {tipo
 
 IDENTIDAD:
 - No tienes nombre propio: eres "el asistente de Digitaliza".
-- Si te preguntan si eres humano, aclara con naturalidad que eres el asistente virtual
-  de Digitaliza, pero que un asesor humano puede continuar la conversación.
+- SOLO te presentas UNA vez, al inicio de la conversación. NO te vuelvas a
+  presentar después ("soy el asistente de Digitaliza"), ya lo saben.
+- Si te preguntan si eres humano, aclara con naturalidad que eres el asistente
+  virtual de Digitaliza, pero que un asesor humano puede continuar la conversación.
+
+NATURALIDAD (IMPORTANTE):
+- Habla como una persona real del equipo contestando rápido desde su celular.
+- NUNCA repitas el saludo ("Hola", "Buenas") si ya se saludaron antes.
+- NUNCA repitas información que ya diste en mensajes anteriores.
+- Si el prospecto ya te dijo su tipo de negocio, ciudad o nombre, NO lo vuelvas a
+  preguntar. Usa esa info y avanza la conversación.
+- Evita frases rígidas tipo "Con gusto te explico", "Claro que sí", "Permíteme".
+  Habla suelto: "Va", "Órale", "Sí, claro", "Perfecto", "Listo".
 
 PÚBLICO:
 - Dueños de negocios locales (salones, barberías, consultorios médicos y dentales,
@@ -182,6 +197,18 @@ MEMORIA Y CONTEXTO:
   responde EXACTAMENTE con la señal interna: {senal}
 - Esa señal NO se muestra al cliente, es solo interna. No agregues nada más cuando
   la uses.
+
+CAPTURA DE LEAD (INTERNO — IMPORTANTE):
+- Cuando YA TENGAS los 3 datos del prospecto: su NOMBRE, el NOMBRE DE SU NEGOCIO y
+  su CIUDAD, incluye al INICIO de tu respuesta (una sola vez en toda la conversación)
+  el siguiente tag EXACTO en una línea sola:
+    [LEAD_CAPTURADO: nombre=Juan Pérez; negocio=Barber Joe; ciudad=Mérida]
+  Y después, en un salto de línea, tu respuesta normal al prospecto.
+- El tag se elimina automáticamente antes de enviar al cliente. NO lo muestres al
+  cliente, NO lo menciones, NO lo repitas en mensajes siguientes.
+- Si ya emitiste el tag antes en la conversación, NO lo emitas de nuevo.
+- Si falta alguno de los 3 datos, NO uses el tag todavía. Pídelo de forma natural,
+  uno a la vez, cuando corresponda.
 
 Tu objetivo final: calificar al prospecto, generar confianza y conseguir que acepte
 una llamada con un asesor humano de Digitaliza."""
@@ -426,6 +453,63 @@ def transcribir_audio(audio_bytes: bytes) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Captura de lead y notificación al dueño
+# ─────────────────────────────────────────────────────────────
+
+def _lead_path(phone: str) -> Path:
+    safe = "".join(c for c in phone if c.isalnum() or c in "+-_")
+    return LEADS_DIR / f"{safe}.json"
+
+
+def lead_ya_notificado(phone: str) -> bool:
+    return _lead_path(phone).exists()
+
+
+def guardar_lead(phone: str, datos: dict) -> None:
+    payload = {
+        **datos,
+        "telefono": phone,
+        "ts": datetime.utcnow().isoformat() + "Z",
+    }
+    _lead_path(phone).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def extraer_lead(texto: str) -> tuple[str, dict | None]:
+    """Devuelve (texto_limpio, datos_lead o None). Solo captura el primer tag."""
+    m = LEAD_TAG_RE.search(texto)
+    if not m:
+        return texto, None
+    cuerpo = m.group(1).strip()
+    datos = {}
+    for parte in cuerpo.split(";"):
+        if "=" in parte:
+            k, v = parte.split("=", 1)
+            datos[k.strip().lower()] = v.strip()
+    limpio = LEAD_TAG_RE.sub("", texto).strip()
+    return limpio, datos
+
+
+def notificar_dueno(from_bot_number: str, prospecto_phone: str, datos: dict) -> None:
+    """Manda resumen al dueño desde el mismo número del bot."""
+    if not OWNER_PHONE:
+        log.warning("OWNER_PHONE no configurado; no se notifica lead")
+        return
+    nombre = datos.get("nombre", "(sin nombre)")
+    negocio = datos.get("negocio", "(sin negocio)")
+    ciudad = datos.get("ciudad", "(sin ciudad)")
+    msg = (
+        f"🆕 Nuevo lead: {nombre}, {negocio}, {ciudad}.\n"
+        f"Número: {prospecto_phone}"
+    )
+    log.info("[LEAD] Notificando al dueño %s: %s / %s / %s",
+             OWNER_PHONE, nombre, negocio, ciudad)
+    ycloud_enviar_texto(from_bot_number, OWNER_PHONE, msg)
+
+
+# ─────────────────────────────────────────────────────────────
 # Procesamiento de un mensaje entrante YCloud
 # ─────────────────────────────────────────────────────────────
 
@@ -505,9 +589,19 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             return
 
         guardar_mensaje(from_number, "user", texto_guardar)
-        respuesta = preguntar_gemini(from_number, entrada_usuario)
+        respuesta_cruda = preguntar_gemini(from_number, entrada_usuario)
+
+        respuesta, datos_lead = extraer_lead(respuesta_cruda)
+        if datos_lead and not lead_ya_notificado(from_number):
+            guardar_lead(from_number, datos_lead)
+            try:
+                notificar_dueno(to_number, from_number, datos_lead)
+            except Exception:
+                log.exception("Error notificando al dueño")
+
         guardar_mensaje(from_number, "assistant", respuesta)
-        ycloud_enviar_texto(to_number, from_number, respuesta)
+        if respuesta:
+            ycloud_enviar_texto(to_number, from_number, respuesta)
 
     except Exception:
         log.error("Error procesando mensaje:\n%s", traceback.format_exc())
