@@ -32,7 +32,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODELO = os.environ.get("GROQ_MODELO", "whisper-large-v3")
 YCLOUD_API_KEY = os.environ.get("YCLOUD_API_KEY", "")
 YCLOUD_VERIFY_TOKEN = os.environ.get("YCLOUD_WEBHOOK_VERIFY_TOKEN", "digitaliza2026")
-GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3-flash")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 PORT = int(os.environ.get("PORT", "5000"))
 OWNER_PHONE = os.environ.get("OWNER_PHONE", "525635849043")
@@ -890,21 +890,23 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             entrada_usuario = cuerpo
             texto_guardar = cuerpo
 
-        elif tipo == "audio":
-            media_id = (msg.get("audio") or {}).get("id", "")
+        elif tipo == "audio" or tipo == "voice":
+            media_id = (msg.get("audio") or msg.get("voice") or {}).get("id", "")
             audio_bytes = ycloud_descargar_media(media_id)
             if not audio_bytes:
                 ycloud_enviar_texto(to_number, from_number,
-                                    "No pude escuchar el audio, ¿podría reenviarlo o escribirlo?")
+                                    "No pude escuchar bien tu audio, ¿me lo puedes escribir?")
                 return
             transcripcion = transcribir_audio(audio_bytes)
             if not transcripcion:
                 ycloud_enviar_texto(to_number, from_number,
-                                    "No logré entender el audio. ¿Me lo podría escribir?")
+                                    "No logré entender el audio. ¿Me lo escribes?")
                 return
             log.info("[%s] Transcripción: %s", from_number, transcripcion[:120])
-            entrada_usuario = f"[Audio transcrito]: {transcripcion}"
-            texto_guardar = entrada_usuario
+            # Mandamos solo el texto, sin indicar que fue audio, para que Gemini
+            # responda naturalmente como si fuera un mensaje de texto normal.
+            entrada_usuario = transcripcion
+            texto_guardar = transcripcion
 
         elif tipo == "image":
             img_obj = msg.get("image") or {}
@@ -913,18 +915,18 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             img_bytes = ycloud_descargar_media(media_id)
             if not img_bytes:
                 ycloud_enviar_texto(to_number, from_number,
-                                    "No pude abrir la imagen, ¿podría reenviarla?")
+                                    "No pude ver tu imagen, ¿la puedes enviar de nuevo?")
                 return
             try:
                 pil = Image.open(io.BytesIO(img_bytes))
             except Exception:
                 log.exception("No se pudo abrir imagen")
                 ycloud_enviar_texto(to_number, from_number,
-                                    "La imagen parece dañada, ¿podría reenviarla?")
+                                    "La imagen parece dañada, ¿me la reenvías?")
                 return
-            texto_acompanante = caption or "El cliente envió una imagen. Describe lo relevante y responde."
+            texto_acompanante = caption or "El cliente te envió esta imagen. Analízala y responde según el contexto de la conversación."
             entrada_usuario = [texto_acompanante, pil]
-            texto_guardar = f"[Imagen] {caption}".strip()
+            texto_guardar = f"[Imagen] {caption}" if caption else "[Imagen]"
 
         else:
             ycloud_enviar_texto(to_number, from_number,
