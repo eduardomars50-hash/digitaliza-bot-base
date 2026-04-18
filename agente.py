@@ -333,6 +333,28 @@ DETECCIÓN DE INTENCIÓN DE COMPRA (INTERNO):
   Esta señal es interna, NO se muestra al cliente, no la menciones. Solo emítela UNA
   vez por conversación.
 
+CALENDARIO (INTERNO — IMPORTANTE):
+Si el prospecto quiere agendar una llamada, cita o reunión:
+1. Pregunta qué día le conviene (hoy, mañana, fecha específica).
+2. Cuando tengas la fecha en formato YYYY-MM-DD, responde EXACTAMENTE con una
+   línea sola con la señal:
+     [CALENDARIO:CONSULTAR:2026-04-18]
+   No agregues texto adicional en ese turno. El sistema te dará los horarios
+   libres y con eso generas la respuesta al prospecto.
+3. Cuando el sistema te devuelva los horarios disponibles, preséntalos de
+   forma natural al prospecto y pregúntale cuál le acomoda (sin listas
+   numeradas, sin bullets — estilo WhatsApp normal).
+4. Cuando el prospecto elija un horario, responde con DOS cosas:
+   a) Al inicio, una línea sola con el tag:
+        [CALENDARIO:AGENDAR:2026-04-18:10:00:Juan Pérez:cotización bot]
+      Formato: fecha:hora:nombre:motivo. El nombre NO debe tener ":".
+      La hora va como HH:MM en 24h.
+   b) Debajo, la confirmación al prospecto estilo:
+        "Listo, quedó agendado para el 18 a las 10am. Te va a llegar la
+         confirmación en un ratito."
+5. Los tags [CALENDARIO:...] son INTERNOS, el cliente NO los ve. NO los
+   menciones, NO los repitas.
+
 CAPTURA DE LEAD (INTERNO — IMPORTANTE):
 - Cuando YA TENGAS los 3 datos del prospecto: su NOMBRE, el NOMBRE DE SU NEGOCIO y
   su CIUDAD, incluye al INICIO de tu respuesta (una sola vez en toda la conversación)
@@ -607,6 +629,165 @@ def transcribir_audio(audio_bytes: bytes) -> str:
     except Exception:
         log.exception("Error transcribiendo audio")
         return ""
+
+
+# ─────────────────────────────────────────────────────────────
+# Google Calendar
+# ─────────────────────────────────────────────────────────────
+
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
+GOOGLE_CALENDAR_ID = os.environ.get("GOOGLE_CALENDAR_ID", "primary")
+CAL_TIMEZONE = "America/Mexico_City"
+
+CAL_RE_CONSULTAR = re.compile(r"\[CALENDARIO:CONSULTAR:(\d{4}-\d{2}-\d{2})\]")
+# fecha : hora : nombre : motivo  (el nombre no debe contener ":")
+CAL_RE_AGENDAR = re.compile(
+    r"\[CALENDARIO:AGENDAR:(\d{4}-\d{2}-\d{2}):(\d{1,2}:\d{2}):([^:\]]+):([^\]]+)\]"
+)
+
+
+def _calendar_service():
+    """Construye un cliente de Google Calendar con refresh_token.
+
+    Devuelve None si falta configuración. Evita crashear si aún no hay
+    credenciales en Railway (el resto del bot sigue funcionando).
+    """
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and GOOGLE_REFRESH_TOKEN):
+        log.warning("Google Calendar: faltan credenciales, función deshabilitada")
+        return None
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+    except Exception:
+        log.exception("Google Calendar: fallan imports (¿faltan dependencias?)")
+        return None
+    creds = Credentials(
+        token=None,
+        refresh_token=GOOGLE_REFRESH_TOKEN,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        scopes=["https://www.googleapis.com/auth/calendar"],
+    )
+    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+
+
+def _slots_del_dia(fecha: str) -> list[int]:
+    """Bloques horarios base (hora del día) según día de la semana, antes de
+    cruzar con el calendario. L-V 9..18, Sáb 10..13, Domingo vacío."""
+    try:
+        y, m, d = map(int, fecha.split("-"))
+        weekday = datetime(y, m, d).weekday()
+    except Exception:
+        return []
+    if weekday == 6:
+        return []
+    if weekday == 5:
+        return [10, 11, 12, 13]
+    return list(range(9, 19))
+
+
+def consultar_disponibilidad(fecha: str) -> list[str]:
+    """Devuelve horarios libres (lista de 'HH:00') para la fecha YYYY-MM-DD.
+
+    Bloques de 1 hora. Consulta el calendario de Eduardo con freeBusy y
+    excluye cualquier bloque que se solape con eventos ocupados.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+    except Exception:
+        log.exception("zoneinfo no disponible")
+        return []
+
+    horas = _slots_del_dia(fecha)
+    if not horas:
+        return []
+
+    svc = _calendar_service()
+    if svc is None:
+        # Sin Calendar configurado: devuelve todo el rango base como disponible,
+        # así el bot no se queda mudo en pruebas locales.
+        return [f"{h:02d}:00" for h in horas]
+
+    try:
+        y, m, d = map(int, fecha.split("-"))
+    except Exception:
+        return []
+    tz = ZoneInfo(CAL_TIMEZONE)
+    dia_inicio = datetime(y, m, d, 0, 0, tzinfo=tz)
+    dia_fin = datetime(y, m, d, 23, 59, 59, tzinfo=tz)
+
+    try:
+        resp = svc.freebusy().query(body={
+            "timeMin": dia_inicio.isoformat(),
+            "timeMax": dia_fin.isoformat(),
+            "timeZone": CAL_TIMEZONE,
+            "items": [{"id": GOOGLE_CALENDAR_ID}],
+        }).execute()
+        busy_raw = (
+            resp.get("calendars", {}).get(GOOGLE_CALENDAR_ID, {}).get("busy", [])
+        )
+    except Exception:
+        log.exception("Error consultando freebusy en Google Calendar")
+        return []
+
+    busy: list[tuple[datetime, datetime]] = []
+    for b in busy_raw:
+        try:
+            bs = datetime.fromisoformat(b["start"].replace("Z", "+00:00")).astimezone(tz)
+            be = datetime.fromisoformat(b["end"].replace("Z", "+00:00")).astimezone(tz)
+            busy.append((bs, be))
+        except Exception:
+            continue
+
+    libres = []
+    for h in horas:
+        slot_start = datetime(y, m, d, h, 0, tzinfo=tz)
+        slot_end = slot_start + timedelta(hours=1)
+        if not any(bs < slot_end and be > slot_start for bs, be in busy):
+            libres.append(f"{h:02d}:00")
+    return libres
+
+
+def agendar_cita(
+    fecha: str, hora: str, nombre: str, telefono: str, motivo: str
+) -> bool:
+    """Crea un evento de 1 hora en el calendario. Devuelve True si se creó."""
+    try:
+        from zoneinfo import ZoneInfo
+    except Exception:
+        log.exception("zoneinfo no disponible")
+        return False
+    svc = _calendar_service()
+    if svc is None:
+        return False
+    try:
+        y, m, d = map(int, fecha.split("-"))
+        hh, mm = map(int, hora.split(":"))
+    except Exception:
+        return False
+    tz = ZoneInfo(CAL_TIMEZONE)
+    inicio = datetime(y, m, d, hh, mm, tzinfo=tz)
+    fin = inicio + timedelta(hours=1)
+    evento = {
+        "summary": f"Llamada Digitaliza — {nombre}",
+        "description": (
+            f"Prospecto: {nombre}\n"
+            f"Teléfono: {telefono}\n"
+            f"Motivo: {motivo}\n\n"
+            f"Agendada automáticamente por el bot."
+        ),
+        "start": {"dateTime": inicio.isoformat(), "timeZone": CAL_TIMEZONE},
+        "end": {"dateTime": fin.isoformat(), "timeZone": CAL_TIMEZONE},
+    }
+    try:
+        svc.events().insert(calendarId=GOOGLE_CALENDAR_ID, body=evento).execute()
+        return True
+    except Exception:
+        log.exception("Error insertando evento en Google Calendar")
+        return False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1371,6 +1552,51 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
 
         respuesta_cruda = preguntar_gemini(from_number, entrada_usuario)
 
+        # ─── CALENDARIO: round-trip si Gemini pidió consultar ───
+        # Hasta 2 iteraciones por si pide otra fecha después de la primera.
+        for _ in range(2):
+            m_cons = CAL_RE_CONSULTAR.search(respuesta_cruda)
+            if not m_cons:
+                break
+            fecha_cons = m_cons.group(1)
+            libres = consultar_disponibilidad(fecha_cons)
+            if not libres:
+                ctx = (
+                    f"[SISTEMA: No hay horarios disponibles el {fecha_cons} "
+                    f"(domingo, día no laborable, o agenda llena). "
+                    f"Ofrece al prospecto otro día cercano.]"
+                )
+            else:
+                ctx = (
+                    f"[SISTEMA: Horarios libres el {fecha_cons}: "
+                    f"{', '.join(libres)}. Preséntalos al prospecto de forma "
+                    f"natural (estilo WhatsApp, sin listas) y pregúntale cuál "
+                    f"le acomoda. No incluyas otra señal [CALENDARIO:...] "
+                    f"en esta respuesta.]"
+                )
+            respuesta_cruda = preguntar_gemini(
+                from_number, ctx, n_contexto=CONTEXTO_EXTENDIDO
+            )
+
+        # ─── CALENDARIO: ejecutar AGENDAR si Gemini lo emitió ───
+        cita_agendada: dict | None = None
+        m_ag = CAL_RE_AGENDAR.search(respuesta_cruda)
+        if m_ag:
+            fecha_ag = m_ag.group(1)
+            hora_ag = m_ag.group(2)
+            nombre_ag = m_ag.group(3).strip()
+            motivo_ag = m_ag.group(4).strip()
+            ok = agendar_cita(fecha_ag, hora_ag, nombre_ag, from_number, motivo_ag)
+            if ok:
+                cita_agendada = {
+                    "fecha": fecha_ag, "hora": hora_ag,
+                    "nombre": nombre_ag, "motivo": motivo_ag,
+                }
+            else:
+                log.warning("[CAL] agendar_cita falló: %s %s %s",
+                            fecha_ag, hora_ag, nombre_ag)
+            respuesta_cruda = CAL_RE_AGENDAR.sub("", respuesta_cruda).strip()
+
         respuesta, datos_lead = extraer_lead(respuesta_cruda)
         if datos_lead and not lead_ya_notificado(from_number):
             guardar_lead(from_number, datos_lead)
@@ -1390,6 +1616,19 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
         guardar_mensaje(from_number, "assistant", respuesta)
         if respuesta:
             ycloud_enviar_texto(to_number, from_number, respuesta)
+
+        # ─── NOTIFICACIÓN: cita agendada ───
+        if cita_agendada:
+            try:
+                _notificar_owner(
+                    f"📅 Nueva cita agendada\n"
+                    f"Nombre: {cita_agendada['nombre']}\n"
+                    f"Número: {from_number}\n"
+                    f"Fecha: {cita_agendada['fecha']} a las {cita_agendada['hora']}\n"
+                    f"Motivo: {cita_agendada['motivo']}"
+                )
+            except Exception:
+                log.exception("Error notificando cita al dueño")
 
         # ─── NOTIFICACIÓN: lead calificado (post-respuesta) ───
         try:
