@@ -12,7 +12,8 @@ import json
 import time
 import traceback
 import logging
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
 
@@ -32,7 +33,7 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODELO = os.environ.get("GROQ_MODELO", "whisper-large-v3")
 YCLOUD_API_KEY = os.environ.get("YCLOUD_API_KEY", "")
 YCLOUD_VERIFY_TOKEN = os.environ.get("YCLOUD_WEBHOOK_VERIFY_TOKEN", "digitaliza2026")
-GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-3-flash-preview")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 PORT = int(os.environ.get("PORT", "5000"))
 OWNER_PHONE = os.environ.get("OWNER_PHONE", "525635849043")
@@ -281,6 +282,15 @@ MEMORIA Y CONTEXTO:
   responde EXACTAMENTE con la señal interna: {senal}
 - Esa señal NO se muestra al cliente, es solo interna. No agregues nada más cuando
   la uses.
+
+DETECCIÓN DE INTENCIÓN DE COMPRA (INTERNO):
+- Si detectas que el prospecto quiere CONTRATAR, COMPRAR, EMPEZAR o AGENDAR LLAMADA
+  (frases como "quiero contratar", "me interesa empezar", "cómo le hago para contratar",
+  "cuándo empezamos", "sí quiero", "va, lo tomo", "dónde deposito", "cómo pago"),
+  agrega al FINAL de tu respuesta, en una línea sola:
+    [EVENTO:QUIERE_CONTRATAR]
+  Esta señal es interna, NO se muestra al cliente, no la menciones. Solo emítela UNA
+  vez por conversación.
 
 CAPTURA DE LEAD (INTERNO — IMPORTANTE):
 - Cuando YA TENGAS los 3 datos del prospecto: su NOMBRE, el NOMBRE DE SU NEGOCIO y
@@ -541,6 +551,207 @@ def transcribir_audio(audio_bytes: bytes) -> str:
     except Exception:
         log.exception("Error transcribiendo audio")
         return ""
+
+
+# ─────────────────────────────────────────────────────────────
+# Config persistente y notificaciones proactivas
+# ─────────────────────────────────────────────────────────────
+
+CONFIG_PATH = DATA_DIR / "config.json"
+EVENTO_CONTRATAR_RE = re.compile(r"\[EVENTO:QUIERE_CONTRATAR\]", re.IGNORECASE)
+SEGUIMIENTO_DIR = DATA_DIR / "seguimiento"
+SEGUIMIENTO_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _load_config() -> dict:
+    if CONFIG_PATH.exists():
+        try:
+            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_config(cfg: dict) -> None:
+    CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def notificaciones_activas() -> bool:
+    cfg = _load_config()
+    silenciado_hasta = cfg.get("notificaciones_silenciadas_hasta")
+    if silenciado_hasta:
+        try:
+            hasta = datetime.fromisoformat(silenciado_hasta)
+            if datetime.utcnow() < hasta:
+                return False
+        except Exception:
+            pass
+    return True
+
+
+def silenciar_notificaciones(horas: int = 8) -> None:
+    cfg = _load_config()
+    cfg["notificaciones_silenciadas_hasta"] = (
+        datetime.utcnow() + timedelta(hours=horas)
+    ).isoformat() + "Z"
+    _save_config(cfg)
+    log.info("[CONFIG] Notificaciones silenciadas por %d horas", horas)
+
+
+def activar_notificaciones() -> None:
+    cfg = _load_config()
+    cfg.pop("notificaciones_silenciadas_hasta", None)
+    _save_config(cfg)
+    log.info("[CONFIG] Notificaciones reactivadas")
+
+
+def _notificar_owner(mensaje: str) -> None:
+    """Manda mensaje proactivo al dueño si las notificaciones están activas."""
+    if not OWNER_PHONE or not notificaciones_activas():
+        return
+    from_number = "+" + _normalizar_phone(BOT_PHONE or "525631832858")
+    try:
+        ycloud_enviar_texto(from_number, OWNER_PHONE, mensaje)
+    except Exception:
+        log.exception("Error mandando notificación al dueño")
+
+
+def _es_primer_mensaje(phone: str) -> bool:
+    """True si solo hay 1 mensaje del usuario en el historial."""
+    hist = cargar_historial(phone)
+    user_msgs = [m for m in hist if m.get("role") == "user"]
+    return len(user_msgs) <= 1
+
+
+def notificar_nuevo_prospecto(phone: str, primer_msg: str) -> None:
+    """Notifica al dueño cuando un prospecto nuevo escribe por primera vez."""
+    if not _es_primer_mensaje(phone):
+        return
+    _notificar_owner(
+        f"🔔 Nuevo prospecto escribió al bot\n"
+        f"Número: {phone}\n"
+        f"Primer mensaje: {primer_msg[:200]}"
+    )
+
+
+def notificar_lead_calificado(phone: str) -> None:
+    """Notifica cuando el perfil tiene nombre + tipo_negocio y no fue notificado aún."""
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", "desconocido")
+    tipo = perfil.get("tipo_negocio", "desconocido")
+    if nombre == "desconocido" or tipo == "desconocido":
+        return
+    # Ya notificado?
+    seg_path = SEGUIMIENTO_DIR / f"{_normalizar_phone(phone)}_lead_calificado.flag"
+    if seg_path.exists():
+        return
+    interes = perfil.get("interes", "?")
+    ciudad = perfil.get("ciudad", "?")
+    _notificar_owner(
+        f"🔥 Lead calificado!\n"
+        f"Nombre: {nombre}\n"
+        f"Negocio: {tipo}\n"
+        f"Ciudad: {ciudad}\n"
+        f"Número: {phone}\n"
+        f"Interés: {interes}"
+    )
+    seg_path.write_text(datetime.utcnow().isoformat() + "Z")
+
+
+def notificar_quiere_contratar(phone: str) -> None:
+    """Notifica cuando Gemini detecta intención de compra."""
+    seg_path = SEGUIMIENTO_DIR / f"{_normalizar_phone(phone)}_quiere_contratar.flag"
+    if seg_path.exists():
+        return
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", phone)
+    tipo = perfil.get("tipo_negocio", "?")
+    _notificar_owner(
+        f"🚀 PROSPECTO QUIERE CONTRATAR\n"
+        f"Nombre: {nombre}\n"
+        f"Negocio: {tipo}\n"
+        f"Número: {phone}\n"
+        f"Escríbele YA"
+    )
+    seg_path.write_text(datetime.utcnow().isoformat() + "Z")
+
+
+def _extraer_evento_contratar(texto: str) -> tuple[str, bool]:
+    """Quita [EVENTO:QUIERE_CONTRATAR] del texto. Devuelve (limpio, detectado)."""
+    if EVENTO_CONTRATAR_RE.search(texto):
+        return EVENTO_CONTRATAR_RE.sub("", texto).strip(), True
+    return texto, False
+
+
+# ─── SCHEDULER DE SEGUIMIENTO (background thread) ───
+
+def _verificar_seguimientos() -> None:
+    """Revisa conversaciones activas. Notifica si >6h sin respuesta y >3 msgs."""
+    try:
+        ahora = datetime.utcnow()
+        for f in CONVERSACIONES_DIR.glob("*.json"):
+            phone = f.stem
+            if _normalizar_phone(phone) == _normalizar_phone(OWNER_PHONE or ""):
+                continue
+            seg_flag = SEGUIMIENTO_DIR / f"{_normalizar_phone(phone)}_seguimiento.flag"
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if len(data) < 3:
+                continue
+            ultimo_user = None
+            for m in reversed(data):
+                if m.get("role") == "user" and m.get("ts"):
+                    try:
+                        ts = m["ts"].replace("Z", "+00:00")
+                        ultimo_user = datetime.fromisoformat(ts).replace(tzinfo=None)
+                    except Exception:
+                        pass
+                    break
+            if not ultimo_user:
+                continue
+            horas_sin_resp = (ahora - ultimo_user).total_seconds() / 3600
+            if horas_sin_resp < 6 or horas_sin_resp > 48:
+                continue
+            # Solo notificar una vez por ventana de 12h
+            if seg_flag.exists():
+                try:
+                    last = datetime.fromisoformat(
+                        seg_flag.read_text().strip().replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
+                    if (ahora - last).total_seconds() < 12 * 3600:
+                        continue
+                except Exception:
+                    pass
+            perfil = _perfil_cliente(phone)
+            nombre = perfil.get("nombre", phone)
+            interes = perfil.get("interes", "?")
+            horas_int = int(horas_sin_resp)
+            _notificar_owner(
+                f"⏰ Seguimiento pendiente\n"
+                f"{nombre} ({phone}) no ha respondido en {horas_int} horas\n"
+                f"Último tema: {interes}\n"
+                f"¿Quieres que le escriba?"
+            )
+            seg_flag.write_text(ahora.isoformat() + "Z")
+    except Exception:
+        log.exception("Error en scheduler de seguimiento")
+
+
+def _scheduler_loop() -> None:
+    """Corre cada hora revisando seguimientos."""
+    while True:
+        time.sleep(3600)  # 1 hora
+        try:
+            _verificar_seguimientos()
+        except Exception:
+            log.exception("Error en scheduler_loop")
+
+
+# Iniciar scheduler como daemon thread
+_scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
+_scheduler_thread.start()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -878,6 +1089,19 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str) -> None:
     """Eduardo escribió desde OWNER_PHONE. Modo asistente ejecutivo."""
     log.info("[ADMIN] Consulta del dueño: %s", texto_usuario[:120])
 
+    # ─── Comandos rápidos de notificaciones ───
+    texto_lower = texto_usuario.lower().strip()
+    if texto_lower in ("silenciar notificaciones", "silenciar", "mute"):
+        silenciar_notificaciones(8)
+        ycloud_enviar_texto(to_number, OWNER_PHONE,
+                            "🔇 Notificaciones silenciadas por 8 horas.")
+        return
+    if texto_lower in ("activar notificaciones", "activar", "unmute"):
+        activar_notificaciones()
+        ycloud_enviar_texto(to_number, OWNER_PHONE,
+                            "🔔 Notificaciones reactivadas.")
+        return
+
     contexto = _inventario_prospectos()
 
     # Incluir alertas de seguridad si Eduardo pregunta
@@ -1048,6 +1272,13 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             return
 
         guardar_mensaje(from_number, "user", texto_guardar)
+
+        # ─── NOTIFICACIÓN: nuevo prospecto ───
+        try:
+            notificar_nuevo_prospecto(from_number, texto_guardar)
+        except Exception:
+            log.exception("Error en notificar_nuevo_prospecto")
+
         respuesta_cruda = preguntar_gemini(from_number, entrada_usuario)
 
         respuesta, datos_lead = extraer_lead(respuesta_cruda)
@@ -1058,9 +1289,23 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             except Exception:
                 log.exception("Error notificando al dueño")
 
+        # ─── EVENTO: quiere contratar ───
+        respuesta, quiere_contratar = _extraer_evento_contratar(respuesta)
+        if quiere_contratar:
+            try:
+                notificar_quiere_contratar(from_number)
+            except Exception:
+                log.exception("Error en notificar_quiere_contratar")
+
         guardar_mensaje(from_number, "assistant", respuesta)
         if respuesta:
             ycloud_enviar_texto(to_number, from_number, respuesta)
+
+        # ─── NOTIFICACIÓN: lead calificado (post-respuesta) ───
+        try:
+            notificar_lead_calificado(from_number)
+        except Exception:
+            log.exception("Error en notificar_lead_calificado")
 
     except Exception:
         log.error("Error procesando mensaje:\n%s", traceback.format_exc())
