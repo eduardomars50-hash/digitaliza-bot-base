@@ -132,7 +132,7 @@ Para exponer el webhook localmente: `ngrok http 5000` y pon esa URL en YCloud.
 
 ## Reglas del bot (hardcodeadas en el system prompt)
 
-- Trata al cliente de **usted**, en español.
+- **Tutea** al cliente, en español mexicano natural.
 - **Nunca inventa** información fuera del catálogo.
 - **No da diagnósticos** médicos ni veterinarios: siempre ofrece cita.
 - Si no sabe algo: "déjeme consultarlo con el equipo".
