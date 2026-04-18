@@ -13,6 +13,7 @@ import time
 import traceback
 import logging
 import threading
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import Lock
@@ -40,11 +41,9 @@ OWNER_PHONE = os.environ.get("OWNER_PHONE", "525635849043")
 BOT_PHONE = os.environ.get("BOT_PHONE", "525631832858")
 
 CONVERSACIONES_DIR = DATA_DIR / "conversaciones"
-CITAS_DIR = DATA_DIR / "citas"
-MEDIA_DIR = DATA_DIR / "media"
 LEADS_DIR = DATA_DIR / "leads"
 PERFILES_DIR = DATA_DIR / "perfiles"
-for d in (CONVERSACIONES_DIR, CITAS_DIR, MEDIA_DIR, LEADS_DIR, PERFILES_DIR):
+for d in (CONVERSACIONES_DIR, LEADS_DIR, PERFILES_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 MAX_HISTORIAL = 50
@@ -62,13 +61,36 @@ RATE_LIMIT_MAX = 20           # mensajes por ventana
 RATE_LIMIT_WINDOW = 60        # segundos
 _rate_counters: dict[str, list[float]] = {}
 
-# Jailbreak detection patterns
+# Jailbreak detection — solo frases completas de ataque conocido.
+# Evitamos fragmentos como "actúa como" que dispararían con prospectos reales
+# ("¿tú actúas como recepcionista?"). Si el prompt se filtra, la capa de
+# defensa real está en el system prompt de Gemini, no en este regex.
 _JAILBREAK_PATTERNS = re.compile(
-    r"(ignora\s+(tus|las)\s+instrucciones|olvida\s+todo\s+lo\s+anterior|"
-    r"system\s*prompt|act[uú]a\s+como|eres\s+DAN|ignore\s+(your|previous)\s+instructions|"
-    r"forget\s+(your|all)\s+instructions|you\s+are\s+now|pretend\s+you\s+are|"
-    r"modo\s+(dios|god)|jailbreak|bypass\s+filters|reveal\s+your\s+prompt|"
-    r"mu[eé]strame\s+tu\s+prompt|cu[aá]les\s+son\s+tus\s+instrucciones)",
+    r"("
+    r"ignora\s+(tus|las|todas)\s+(las\s+)?instrucciones(\s+anteriores)?"
+    r"|olvida\s+todo\s+lo\s+anterior"
+    r"|olvida\s+(tus|las)\s+instrucciones"
+    r"|act[uú]a\s+como\s+(chatgpt|gpt|claude|dan|otro\s+bot|un\s+modelo)"
+    r"|eres\s+ahora\s+"
+    r"|ahora\s+eres\s+(dan|chatgpt|otro)"
+    r"|eres\s+dan\b"
+    r"|modo\s+(dios|god|developer|sudo)"
+    r"|jailbreak\b"
+    r"|bypass\s+filters"
+    r"|reveal\s+your\s+(system\s+)?prompt"
+    r"|show\s+me\s+your\s+(system\s+)?prompt"
+    r"|repeat\s+your\s+(system\s+)?(prompt|instructions)"
+    r"|print\s+your\s+(system\s+)?(prompt|instructions)"
+    r"|mu[eé]strame\s+tu\s+(system\s+)?prompt"
+    r"|mu[eé]strame\s+tus\s+instrucciones"
+    r"|rep[ií]teme\s+tu\s+(system\s+)?prompt"
+    r"|rep[ií]teme\s+tus\s+instrucciones"
+    r"|cu[aá]les\s+son\s+tus\s+instrucciones"
+    r"|ignore\s+(your|all|the)\s+(previous\s+)?instructions"
+    r"|forget\s+(your|all|the)\s+(previous\s+)?instructions"
+    r"|you\s+are\s+now\s+(dan|chatgpt|an?\s+\w+)"
+    r"|pretend\s+you\s+are\s+"
+    r")",
     re.IGNORECASE,
 )
 
@@ -330,15 +352,26 @@ una llamada con un asesor humano de Digitaliza."""
 # Persistencia de conversaciones
 # ─────────────────────────────────────────────────────────────
 
-_file_locks: dict[str, Lock] = {}
+# LRU acotado: cada número tiene su lock; cuando pasamos el tope eliminamos
+# el más viejo. 1000 es holgado para el volumen actual (un bot local) y
+# evita crecimiento ilimitado en procesos que corren meses.
+_FILE_LOCKS_MAX = 1000
+_file_locks: "OrderedDict[str, Lock]" = OrderedDict()
 _global_lock = Lock()
 
 
 def _lock_for(phone: str) -> Lock:
+    key = normalizar_numero(phone)
     with _global_lock:
-        if phone not in _file_locks:
-            _file_locks[phone] = Lock()
-        return _file_locks[phone]
+        lock = _file_locks.get(key)
+        if lock is None:
+            lock = Lock()
+            _file_locks[key] = lock
+            if len(_file_locks) > _FILE_LOCKS_MAX:
+                _file_locks.popitem(last=False)  # evict el más viejo
+        else:
+            _file_locks.move_to_end(key)  # marcar como reciente
+        return lock
 
 
 def _conv_path(phone: str) -> Path:
@@ -423,6 +456,12 @@ def build_system_prompt() -> str:
     )
 
 
+# System prompt cacheado en arranque. Railway redeploya el proceso cada
+# vez que cambias negocio.txt o catalogo.txt, así que no necesitamos
+# releer en cada mensaje.
+SYSTEM_PROMPT_CACHED = build_system_prompt()
+
+
 # ─────────────────────────────────────────────────────────────
 # Gemini
 # ─────────────────────────────────────────────────────────────
@@ -430,7 +469,7 @@ def build_system_prompt() -> str:
 def _build_model() -> genai.GenerativeModel:
     return genai.GenerativeModel(
         model_name=GEMINI_MODEL_NAME,
-        system_instruction=build_system_prompt(),
+        system_instruction=SYSTEM_PROMPT_CACHED,
         safety_settings=SAFETY_SETTINGS,
         generation_config=GENERATION_CONFIG,
     )
@@ -652,27 +691,60 @@ def notificar_nuevo_prospecto(phone: str, primer_msg: str) -> None:
 
 
 def notificar_lead_calificado(phone: str) -> None:
-    """Notifica cuando el perfil tiene nombre + tipo_negocio y no fue notificado aún."""
+    """Notifica cuando el perfil tiene nombre + tipo_negocio.
+
+    Dos casos:
+    1. Primera vez que se califica → notifica "🔥 Lead calificado".
+    2. Ya había sido notificado pero el nombre o tipo_negocio CAMBIÓ
+       (el prospecto corrigió sus datos) → notifica "📝 Lead actualizado".
+    Guardamos un snapshot JSON con lo último notificado para comparar.
+    """
     perfil = _perfil_cliente(phone)
     nombre = perfil.get("nombre", "desconocido")
     tipo = perfil.get("tipo_negocio", "desconocido")
     if nombre == "desconocido" or tipo == "desconocido":
         return
-    # Ya notificado?
-    seg_path = SEGUIMIENTO_DIR / f"{normalizar_numero(phone)}_lead_calificado.flag"
-    if seg_path.exists():
-        return
-    interes = perfil.get("interes", "?")
+
+    seg_path = SEGUIMIENTO_DIR / f"{normalizar_numero(phone)}_lead_calificado.json"
     ciudad = perfil.get("ciudad", "?")
-    _notificar_owner(
-        f"🔥 Lead calificado!\n"
-        f"Nombre: {nombre}\n"
-        f"Negocio: {tipo}\n"
-        f"Ciudad: {ciudad}\n"
-        f"Número: {phone}\n"
-        f"Interés: {interes}"
-    )
-    seg_path.write_text(datetime.utcnow().isoformat() + "Z")
+    interes = perfil.get("interes", "?")
+
+    if seg_path.exists():
+        try:
+            anterior = json.loads(seg_path.read_text(encoding="utf-8"))
+        except Exception:
+            anterior = {}
+        if (anterior.get("nombre") == nombre
+                and anterior.get("tipo_negocio") == tipo):
+            return  # ya notificado y sin cambios en los campos clave
+        _notificar_owner(
+            f"📝 Lead actualizado\n"
+            f"Nombre: {nombre}\n"
+            f"Negocio: {tipo}\n"
+            f"Ciudad: {ciudad}\n"
+            f"Número: {phone}"
+        )
+    else:
+        _notificar_owner(
+            f"🔥 Lead calificado!\n"
+            f"Nombre: {nombre}\n"
+            f"Negocio: {tipo}\n"
+            f"Ciudad: {ciudad}\n"
+            f"Número: {phone}\n"
+            f"Interés: {interes}"
+        )
+
+    snapshot = {
+        "nombre": nombre,
+        "tipo_negocio": tipo,
+        "ciudad": ciudad,
+        "ts": datetime.utcnow().isoformat() + "Z",
+    }
+    try:
+        seg_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+    except Exception:
+        log.exception("Error guardando snapshot de lead calificado")
 
 
 def notificar_quiere_contratar(phone: str) -> None:
