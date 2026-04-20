@@ -309,6 +309,12 @@ REGLAS ESTRICTAS:
    Después dile: "Perfecto, un asesor te contacta pronto en horario laboral."
 4. Si te mandan una FOTO (menú, local, tarjeta, pantalla actual, etc.) analízala y
    sugiere concretamente cómo Digitaliza la digitalizaría o mejoraría. Sé específico.
+4b. Si te mandan un STICKER, interprétalo como REACCIÓN EMOCIONAL del
+    prospecto (aprobación, risa, confusión, pulgar arriba, corazón, etc.),
+    no como contenido para analizar. Responde BREVE, acorde al tono de la
+    conversación, y sigue moviendo la venta. NO lo describas literalmente
+    ("vi un sticker de un pulgar…"); solo reacciona natural (ej. "va,
+    entonces te aviso del horario", "sí, también me dio risa jaja").
 5. Si te preguntan "¿ya trabajan con [mi competencia]?" o cosas parecidas, no
    confirmes ni niegues clientes específicos; di que por confidencialidad no
    compartes nombres pero que trabajan con varios negocios del giro.
@@ -1563,10 +1569,29 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
                 procesar_mensaje_admin(caption, to_number, imagen=pil)
                 return
 
+            if tipo == "sticker":
+                stk_obj = msg.get("sticker") or {}
+                media_id = stk_obj.get("id", "")
+                stk_bytes = ycloud_descargar_media(media_id, stk_obj)
+                if not stk_bytes:
+                    ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                        "No pude descargar el sticker, ¿me lo reenvías?")
+                    return
+                try:
+                    # WebP nativo en PIL. Si es animado, PIL da el primer frame.
+                    pil = Image.open(io.BytesIO(stk_bytes))
+                except Exception:
+                    log.exception("[ADMIN] No se pudo abrir sticker")
+                    ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                        "El sticker parece dañado, ¿me lo reenvías?")
+                    return
+                procesar_mensaje_admin("(Sticker recibido)", to_number, imagen=pil)
+                return
+
             # Otros tipos (video, documento, ubicación): no soportados
             ycloud_enviar_texto(
                 to_number, OWNER_PHONE,
-                "(Modo admin solo soporta texto, audio e imagen por ahora.)"
+                "(Modo admin solo soporta texto, audio, imagen y stickers por ahora.)"
             )
             return
 
@@ -1634,9 +1659,35 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             entrada_usuario = [texto_acompanante, pil]
             texto_guardar = f"[Imagen] {caption}" if caption else "[Imagen]"
 
+        elif tipo == "sticker":
+            stk_obj = msg.get("sticker") or {}
+            media_id = stk_obj.get("id", "")
+            stk_bytes = ycloud_descargar_media(media_id, stk_obj)
+            if not stk_bytes:
+                ycloud_enviar_texto(to_number, from_number,
+                                    "No pude ver tu sticker, ¿me lo reenvías?")
+                return
+            try:
+                # PIL soporta WebP nativo. Si el sticker es animado, toma el primer
+                # frame — suficiente para entender la reacción emocional.
+                pil = Image.open(io.BytesIO(stk_bytes))
+            except Exception:
+                log.exception("No se pudo abrir sticker")
+                ycloud_enviar_texto(to_number, from_number,
+                                    "El sticker parece dañado, ¿me lo reenvías?")
+                return
+            texto_acompanante = (
+                "El cliente mandó un sticker. Interprétalo como REACCIÓN "
+                "emocional (risa, aprobación, pulgar arriba, confusión, "
+                "corazón, etc.), NO lo describas literalmente. Responde breve "
+                "y acorde al tono de la conversación, y sigue avanzando."
+            )
+            entrada_usuario = [texto_acompanante, pil]
+            texto_guardar = "[Sticker]"
+
         else:
             ycloud_enviar_texto(to_number, from_number,
-                                "Por ahora solo puedo procesar texto, audio e imágenes. ¿Me lo puedes escribir?")
+                                "Por ahora solo puedo procesar texto, audio, imágenes y stickers. ¿Me lo puedes escribir?")
             return
 
         guardar_mensaje(from_number, "user", texto_guardar)
