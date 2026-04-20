@@ -1351,9 +1351,18 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
     return texto.strip(), ver
 
 
-def procesar_mensaje_admin(texto_usuario: str, to_number: str) -> None:
-    """Eduardo escribió desde OWNER_PHONE. Modo asistente ejecutivo."""
-    log.info("[ADMIN] Consulta del dueño: %s", texto_usuario[:120])
+def procesar_mensaje_admin(texto_usuario: str, to_number: str,
+                           imagen=None) -> None:
+    """Eduardo escribió desde OWNER_PHONE. Modo asistente ejecutivo.
+
+    - `texto_usuario`: texto plano. Si el mensaje original era audio, viene
+      ya transcrito. Si era imagen, viene la caption (puede ser vacía).
+    - `imagen`: PIL.Image opcional si Eduardo mandó una foto. El asistente
+      admin la analiza con Gemini Vision.
+    """
+    log.info("[ADMIN] Consulta del dueño: %s%s",
+             texto_usuario[:120],
+             " [+imagen]" if imagen is not None else "")
 
     # ─── Comandos rápidos de notificaciones ───
     texto_lower = texto_usuario.lower().strip()
@@ -1391,8 +1400,21 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str) -> None:
         generation_config=GENERATION_CONFIG,
     )
 
-    mensaje = f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\nPREGUNTA DE EDUARDO:\n{texto_usuario}"
-    resp = modelo.generate_content(mensaje)
+    if imagen is not None:
+        pregunta = texto_usuario or (
+            "Eduardo te mandó esta imagen sin texto. Descríbela brevemente "
+            "y dile si hay algo específico que quiere que hagas con ella."
+        )
+        prompt_text = (
+            f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\n"
+            f"EDUARDO MANDÓ UNA IMAGEN. "
+            f"Interpreta qué muestra y responde a lo que pide.\n\n"
+            f"MENSAJE DE EDUARDO (o caption de la imagen):\n{pregunta}"
+        )
+        resp = modelo.generate_content([prompt_text, imagen])
+    else:
+        mensaje = f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\nPREGUNTA DE EDUARDO:\n{texto_usuario}"
+        resp = modelo.generate_content(mensaje)
     respuesta = (resp.text or "").strip()
 
     respuesta, numeros_ver = _ejecutar_comandos_admin(respuesta)
@@ -1467,10 +1489,46 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
                 if cuerpo:
                     procesar_mensaje_admin(cuerpo, to_number)
                 return
-            # audios / imágenes del dueño: respuesta corta indicando el modo admin
+
+            if tipo in ("audio", "voice"):
+                media_id = (msg.get("audio") or msg.get("voice") or {}).get("id", "")
+                audio_bytes = ycloud_descargar_media(media_id)
+                if not audio_bytes:
+                    ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                        "No pude descargar tu nota de voz, ¿me la reenvías?")
+                    return
+                transcripcion = transcribir_audio(audio_bytes)
+                if not transcripcion:
+                    ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                        "No logré entender el audio, ¿me lo reenvías o lo escribes?")
+                    return
+                log.info("[ADMIN] Audio transcrito: %s", transcripcion[:120])
+                procesar_mensaje_admin(transcripcion, to_number)
+                return
+
+            if tipo == "image":
+                img_obj = msg.get("image") or {}
+                media_id = img_obj.get("id", "")
+                caption = (img_obj.get("caption") or "").strip()
+                img_bytes = ycloud_descargar_media(media_id)
+                if not img_bytes:
+                    ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                        "No pude descargar la imagen, ¿me la reenvías?")
+                    return
+                try:
+                    pil = Image.open(io.BytesIO(img_bytes))
+                except Exception:
+                    log.exception("[ADMIN] No se pudo abrir imagen")
+                    ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                        "La imagen parece dañada, ¿me la reenvías?")
+                    return
+                procesar_mensaje_admin(caption, to_number, imagen=pil)
+                return
+
+            # Otros tipos (video, documento, ubicación): no soportados
             ycloud_enviar_texto(
                 to_number, OWNER_PHONE,
-                "(Modo admin solo soporta texto por ahora. Escríbeme tu pregunta.)"
+                "(Modo admin solo soporta texto, audio e imagen por ahora.)"
             )
             return
 
