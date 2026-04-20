@@ -534,30 +534,67 @@ def preguntar_gemini(phone: str, entrada_usuario, n_contexto: int = CONTEXTO_DEF
 # YCloud: descargar media y enviar mensajes
 # ─────────────────────────────────────────────────────────────
 
-def ycloud_descargar_media(media_id: str) -> bytes | None:
-    """YCloud expone el binario en /v2/whatsapp/media/{id}."""
+def _intentar_descarga_binario(url: str, auth: bool = True) -> bytes | None:
+    """GET una URL y devuelve bytes si es 200 y tiene content-type binario."""
+    headers = {"X-API-Key": YCLOUD_API_KEY} if auth else {}
+    try:
+        r = requests.get(url, headers=headers, timeout=30)
+    except Exception:
+        log.exception("GET falló: %s", url[:120])
+        return None
+    if r.status_code != 200 or not r.content:
+        log.info("[MEDIA] %s → %s %s", url[:120], r.status_code, r.text[:150])
+        return None
+    ctype = (r.headers.get("Content-Type") or "").lower()
+    if ctype.startswith(("audio/", "image/", "video/", "application/octet-stream")):
+        return r.content
+    # Si viene JSON, intentamos sacar una URL firmada adentro.
+    try:
+        data = r.json()
+    except Exception:
+        log.info("[MEDIA] 200 sin binario ni JSON: %s", url[:120])
+        return r.content  # último recurso: devolvemos el contenido tal cual
+    for k in ("url", "downloadUrl", "fileUrl", "link"):
+        inner = data.get(k) if isinstance(data, dict) else None
+        if inner:
+            log.info("[MEDIA] URL firmada encontrada en JSON (%s); descargando", k)
+            return _intentar_descarga_binario(inner, auth=False)
+    log.info("[MEDIA] 200 con JSON pero sin URL útil: %s", json.dumps(data)[:200])
+    return None
+
+
+def ycloud_descargar_media(media_id: str, media_obj: dict | None = None) -> bytes | None:
+    """Descarga el binario de un media_id. Prueba varias estrategias:
+
+    1. URL firmada directa que venga dentro del objeto audio/image/video del
+       webhook (campos 'link', 'url', 'downloadUrl', 'fileUrl').
+    2. GET /v2/whatsapp/media/{media_id} (endpoint histórico).
+    3. GET /v2/whatsapp/media/{media_id}/download.
+
+    Si todas fallan, devuelve None y logea qué pasó en cada intento.
+    """
+    if media_obj:
+        log.info("[MEDIA] objeto webhook: %s",
+                 json.dumps(media_obj, ensure_ascii=False)[:300])
+        for k in ("link", "url", "downloadUrl", "fileUrl"):
+            if media_obj.get(k):
+                blob = _intentar_descarga_binario(media_obj[k], auth=False)
+                if blob:
+                    return blob
+
     if not media_id:
         return None
-    url = f"{YCLOUD_MEDIA_URL}/{media_id}"
-    try:
-        r = requests.get(url, headers={"X-API-Key": YCLOUD_API_KEY}, timeout=30)
-        if r.status_code == 200 and r.content:
-            return r.content
-        # Fallback: algunas cuentas devuelven JSON con una URL firmada
-        try:
-            data = r.json()
-            download_url = data.get("url") or data.get("downloadUrl")
-            if download_url:
-                r2 = requests.get(download_url, timeout=30)
-                if r2.status_code == 200:
-                    return r2.content
-        except Exception:
-            pass
-        log.error("Fallo descargando media %s: %s %s", media_id, r.status_code, r.text[:200])
-        return None
-    except Exception:
-        log.exception("Excepción descargando media %s", media_id)
-        return None
+
+    for url in (
+        f"{YCLOUD_MEDIA_URL}/{media_id}",
+        f"{YCLOUD_MEDIA_URL}/{media_id}/download",
+    ):
+        blob = _intentar_descarga_binario(url, auth=True)
+        if blob:
+            return blob
+
+    log.error("[MEDIA] No se pudo descargar media_id=%s por ningún endpoint", media_id)
+    return None
 
 
 def ycloud_enviar_texto(from_number: str, to_number: str, texto: str) -> None:
@@ -1491,8 +1528,9 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
                 return
 
             if tipo in ("audio", "voice"):
-                media_id = (msg.get("audio") or msg.get("voice") or {}).get("id", "")
-                audio_bytes = ycloud_descargar_media(media_id)
+                media_obj = msg.get("audio") or msg.get("voice") or {}
+                media_id = media_obj.get("id", "")
+                audio_bytes = ycloud_descargar_media(media_id, media_obj)
                 if not audio_bytes:
                     ycloud_enviar_texto(to_number, OWNER_PHONE,
                                         "No pude descargar tu nota de voz, ¿me la reenvías?")
@@ -1510,7 +1548,7 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
                 img_obj = msg.get("image") or {}
                 media_id = img_obj.get("id", "")
                 caption = (img_obj.get("caption") or "").strip()
-                img_bytes = ycloud_descargar_media(media_id)
+                img_bytes = ycloud_descargar_media(media_id, img_obj)
                 if not img_bytes:
                     ycloud_enviar_texto(to_number, OWNER_PHONE,
                                         "No pude descargar la imagen, ¿me la reenvías?")
@@ -1558,8 +1596,9 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             texto_guardar = cuerpo
 
         elif tipo == "audio" or tipo == "voice":
-            media_id = (msg.get("audio") or msg.get("voice") or {}).get("id", "")
-            audio_bytes = ycloud_descargar_media(media_id)
+            media_obj = msg.get("audio") or msg.get("voice") or {}
+            media_id = media_obj.get("id", "")
+            audio_bytes = ycloud_descargar_media(media_id, media_obj)
             if not audio_bytes:
                 ycloud_enviar_texto(to_number, from_number,
                                     "No pude escuchar bien tu audio, ¿me lo puedes escribir?")
@@ -1579,7 +1618,7 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             img_obj = msg.get("image") or {}
             media_id = img_obj.get("id", "")
             caption = (img_obj.get("caption") or "").strip()
-            img_bytes = ycloud_descargar_media(media_id)
+            img_bytes = ycloud_descargar_media(media_id, img_obj)
             if not img_bytes:
                 ycloud_enviar_texto(to_number, from_number,
                                     "No pude ver tu imagen, ¿la puedes enviar de nuevo?")
