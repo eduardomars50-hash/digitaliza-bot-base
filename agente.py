@@ -788,8 +788,15 @@ def ycloud_descargar_media(media_id: str, media_obj: dict | None = None) -> byte
     return None
 
 
-def ycloud_enviar_texto(from_number: str, to_number: str, texto: str) -> None:
+def ycloud_enviar_texto(from_number: str, to_number: str,
+                        texto: str) -> tuple[bool, str]:
+    """Envía un texto por YCloud. Devuelve (ok, detalle). ok=True si al
+    menos una parte se aceptó (status < 400). detalle es un resumen
+    corto del primer error encontrado o "" si todo bien. Los callers
+    históricos que ignoran el retorno siguen funcionando igual."""
     partes = _trocear(texto, MAX_CHARS_MENSAJE)
+    any_ok = False
+    first_error = ""
     for i, parte in enumerate(partes):
         payload = {
             "from": from_number,
@@ -811,9 +818,17 @@ def ycloud_enviar_texto(from_number: str, to_number: str, texto: str) -> None:
                      i + 1, len(partes), to_number, r.status_code, parte[:80])
             if r.status_code >= 400:
                 log.error("YCloud error: %s", r.text[:500])
-        except Exception:
+                if not first_error:
+                    snippet = (r.text or "").strip().replace("\n", " ")[:240]
+                    first_error = f"HTTP {r.status_code}: {snippet}"
+            else:
+                any_ok = True
+        except Exception as e:
             log.exception("Error enviando mensaje a %s", to_number)
+            if not first_error:
+                first_error = f"excepción: {type(e).__name__}: {e}"[:240]
         time.sleep(0.4)  # pequeño respiro entre partes
+    return any_ok, first_error
 
 
 def _trocear(texto: str, limite: int) -> list[str]:
@@ -1499,12 +1514,16 @@ COMANDOS NATURALES (sin tag, tú mismo los atiendes con el contexto):
   últimos eventos de seguridad. Resúmelos brevemente.
 
 IMPORTANTE — VENTANA DE 24H DE WHATSAPP:
-- Meta solo permite mensajes libres si el cliente escribió en las últimas 24h.
-- Si Eduardo te pide escribirle a alguien que ya pasó de 24h, el bot te avisará
-  con un bloque "[SISTEMA: ventana 24h cerrada para +52...]". Cuando veas eso,
-  NO emitas [CMD_ENVIAR] y dile a Eduardo: "ese cliente no ha escrito en 24h,
-  solo se le puede mandar una plantilla aprobada. ¿Lanzo la plantilla de
-  seguimiento?" (aún no está implementada, aviso al usuario).
+- Regla de Meta: los mensajes libres idealmente se mandan en las
+  primeras 24h desde el último msg del cliente. Fuera de eso, a veces
+  pasan (Meta los deja ir con cargo extra) y a veces no.
+- TÚ siempre emite [CMD_ENVIAR] cuando Eduardo te lo pida, aunque hayan
+  pasado más de 24h. El sistema intenta enviar y te reporta el
+  resultado real (✅ enviado / ❌ error con detalle).
+- Si el envío falla y el error menciona ventana 24h o plantilla, el
+  sistema te lo dice. Ahí le propones a Eduardo usar una plantilla
+  aprobada (pendiente de implementar — solo avísale que ese es el
+  próximo paso).
 """
 
 CMD_BORRAR_RE = re.compile(r"\[CMD_BORRAR:\s*(\+?\d+)\s*\]", re.IGNORECASE)
@@ -1661,23 +1680,32 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
         if not cuerpo:
             notas.append(f"⚠️ CMD_ENVIAR a {phone_e164} sin cuerpo, no envié nada.")
             return ""
-        if not ventana_24h_abierta(phone_norm):
-            notas.append(
-                f"⚠️ {phone_e164}: ventana de 24h cerrada, no se puede mandar mensaje "
-                f"libre. Hay que usar plantilla aprobada (no implementado aún)."
-            )
-            return ""
+        # Siempre intentamos. Si Meta/YCloud rechaza (ventana 24h o
+        # cualquier otro motivo), capturamos el error real y se lo
+        # reportamos a Eduardo en vez de bloquear preventivamente.
+        ventana_abierta = ventana_24h_abierta(phone_norm)
+        from_number = BOT_PHONE or "525631832858"
+        from_e164 = "+" + normalizar_numero(from_number)
         try:
-            from_number = BOT_PHONE or "525631832858"
-            from_e164 = "+" + normalizar_numero(from_number)
-            ycloud_enviar_texto(from_e164, phone_e164, cuerpo)
-            notas.append(f"✅ Enviado a {phone_e164}: \"{cuerpo[:120]}\"")
-            try:
-                guardar_mensaje(phone_norm, "assistant", f"[ENVIADO POR EDUARDO] {cuerpo}")
-            except Exception:
-                pass
+            ok, err = ycloud_enviar_texto(from_e164, phone_e164, cuerpo)
         except Exception as e:
             notas.append(f"❌ Error enviando a {phone_e164}: {e}")
+            return ""
+        if ok:
+            extra = "" if ventana_abierta else " (fuera de 24h; llegó igual)"
+            notas.append(f"✅ Enviado a {phone_e164}{extra}: \"{cuerpo[:120]}\"")
+            try:
+                guardar_mensaje(phone_norm, "assistant",
+                                f"[ENVIADO POR EDUARDO] {cuerpo}")
+            except Exception:
+                pass
+        else:
+            hint = ""
+            low = err.lower()
+            if ("24" in low and ("hour" in low or "hora" in low)) or "template" in low:
+                hint = (" — se ve que Meta rechazó por ventana 24h. "
+                        "Requiere plantilla aprobada.")
+            notas.append(f"❌ No se pudo enviar a {phone_e164}: {err}{hint}")
         return ""
 
     texto = CMD_ENVIAR_RE.sub(_enviar, texto)
