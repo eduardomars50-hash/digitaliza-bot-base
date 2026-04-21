@@ -1720,6 +1720,17 @@ def procesar_mensaje_ycloud(msg: dict, _bypass_buffer: bool = False) -> None:
 
         log.info("[IN  %s -> %s] type=%s", from_number, to_number, tipo)
 
+        # ─── BUFFER DE TEXTO (debouncing) ───
+        # Aplica a TODOS los mensajes de texto (cliente y admin). Si el
+        # prospecto/dueño manda varios "hola" en ráfaga, los agrupamos en
+        # un solo turno. Cuando _bypass_buffer=True venimos del flush con
+        # el mensaje sintético combinado y procesamos normal.
+        if tipo == "text" and not _bypass_buffer:
+            cuerpo_check = (msg.get("text") or {}).get("body", "").strip()
+            if cuerpo_check:
+                _enqueue_text_msg(normalizar_numero(from_number), msg)
+                return
+
         # ─── MODO ADMIN ───
         # Si el dueño escribe al bot desde OWNER_PHONE, entra al asistente ejecutivo
         # interno en vez del flujo de ventas. El admin se evalúa ANTES del rate limit
@@ -1798,22 +1809,14 @@ def procesar_mensaje_ycloud(msg: dict, _bypass_buffer: bool = False) -> None:
             return
 
         # ─── RATE LIMITING ─── (no aplica al dueño, ya retornó arriba)
-        # Bypass cuando venimos del flush del buffer: los mensajes originales
-        # ya pasaron rate_limit individualmente al llegar.
+        # Bypass cuando venimos del flush del buffer: el rate ya se evaluó
+        # cuando entró el primer mensaje del grupo (ver buffer arriba — el
+        # buffer corre antes del modo admin pero después del filtro
+        # multi-tenant; si saturamos rate_limit, igual el slot se llena).
         if not _bypass_buffer:
             if not _check_rate_limit(normalizar_numero(from_number)):
                 log.warning("[RATE_LIMIT] %s excedió %d msgs/%ds; ignorado",
                             from_number, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
-                return
-
-        # ─── BUFFER DE TEXTO (debouncing) ───
-        # Los mensajes de TEXTO del cliente se agrupan: encolamos y dejamos
-        # que el timer los procese juntos. _bypass_buffer=True cuando ya
-        # estamos en el flush del grupo combinado.
-        if tipo == "text" and not _bypass_buffer:
-            cuerpo_check = (msg.get("text") or {}).get("body", "").strip()
-            if cuerpo_check:
-                _enqueue_text_msg(normalizar_numero(from_number), msg)
                 return
 
         entrada_usuario = None
