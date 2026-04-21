@@ -1639,6 +1639,136 @@ def _procesar_calendar_admin(respuesta: str) -> str:
     return out
 
 
+# ─────────────────────────────────────────────────────────────
+# Cleanup de archivos huérfanos en /data/
+# ─────────────────────────────────────────────────────────────
+# Histórico: un cambio anterior dejó archivos con prefijo "+<num>.json"
+# en paralelo a la convención canónica "<num>.json". El bot lee solo la
+# canónica, así que los huérfanos quedaron sin uso pero ocupando disco.
+# Estos comandos admin permiten reportar y migrar desde WhatsApp sin
+# necesidad de SSH al container.
+
+def _ruta_canonica_huerfano(huerfano: Path) -> Path:
+    """Quita el '+' inicial del nombre, conservando directorio y sufijo."""
+    return huerfano.with_name(huerfano.name.lstrip("+"))
+
+
+def _fusionar_conversacion_huerfano(huerfano: Path, target: Path) -> int:
+    """Fusiona dos historiales por (role, content, ts) y los re-ordena
+    por ts ascendente. Recorta a MAX_HISTORIAL como hace guardar_mensaje.
+    Devuelve cantidad final de mensajes."""
+    def _leer_lista(p: Path) -> list:
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        return data if isinstance(data, list) else []
+
+    combinado = _leer_lista(huerfano) + _leer_lista(target)
+    visto: set[tuple] = set()
+    unicos: list[dict] = []
+    for m in combinado:
+        if not isinstance(m, dict):
+            continue
+        clave = (m.get("role", ""), m.get("content", ""), m.get("ts", ""))
+        if clave in visto:
+            continue
+        visto.add(clave)
+        unicos.append(m)
+    unicos.sort(key=lambda m: m.get("ts", ""))
+    unicos = unicos[-MAX_HISTORIAL:]
+    target.write_text(
+        json.dumps(unicos, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return len(unicos)
+
+
+def _resolver_huerfano(huerfano: Path, dry_run: bool) -> str:
+    """Decide qué hacer con un archivo huérfano y lo ejecuta (o solo
+    reporta si dry_run). Devuelve descripción corta de la acción."""
+    target = _ruta_canonica_huerfano(huerfano)
+
+    if not target.exists():
+        if not dry_run:
+            huerfano.rename(target)
+        return "renombrar"
+
+    parent = huerfano.parent.name
+    if parent == "conversaciones":
+        if not dry_run:
+            n = _fusionar_conversacion_huerfano(huerfano, target)
+            huerfano.unlink()
+            return f"fusionar (resultado: {n} msgs)"
+        return "fusionar (preview)"
+
+    # Resto: leads, perfiles, seguimiento → keep el más nuevo
+    h_mtime = huerfano.stat().st_mtime
+    t_mtime = target.stat().st_mtime
+    if h_mtime > t_mtime:
+        if not dry_run:
+            target.unlink()
+            huerfano.rename(target)
+        return "reemplazar (huérfano más nuevo)"
+    if not dry_run:
+        huerfano.unlink()
+    return "descartar (target más nuevo)"
+
+
+def _escanear_huerfanos() -> list[Path]:
+    """Recorre los 4 directorios de /data y devuelve los huérfanos."""
+    huerfanos: list[Path] = []
+    dirs = [CONVERSACIONES_DIR, LEADS_DIR, PERFILES_DIR]
+    try:
+        if SEGUIMIENTO_DIR.exists():
+            dirs.append(SEGUIMIENTO_DIR)
+    except NameError:
+        pass
+    for d in dirs:
+        if not d.exists():
+            continue
+        for p in d.iterdir():
+            if p.is_file() and p.name.startswith("+"):
+                huerfanos.append(p)
+    return huerfanos
+
+
+def cleanup_huerfanos(dry_run: bool = True) -> str:
+    """Reporta o ejecuta la limpieza de archivos huérfanos. Devuelve un
+    resumen ya formateado para mandarse por WhatsApp al admin.
+    Idempotente: si no hay huérfanos, lo dice y no hace daño."""
+    huerfanos = _escanear_huerfanos()
+    if not huerfanos:
+        return "🧹 Sin archivos huérfanos. Todo limpio."
+
+    cabecera = (
+        f"🧹 Encontré {len(huerfanos)} archivo(s) huérfano(s) "
+        f"({'DRY-RUN, no se tocó nada' if dry_run else 'LIMPIEZA EJECUTADA'}):"
+    )
+    lineas = [cabecera]
+
+    por_dir: dict[str, list[Path]] = {}
+    for h in huerfanos:
+        por_dir.setdefault(h.parent.name, []).append(h)
+
+    for dir_name, paths in sorted(por_dir.items()):
+        lineas.append(f"\n📁 {dir_name}/  ({len(paths)})")
+        for h in paths[:8]:
+            try:
+                accion = _resolver_huerfano(h, dry_run=dry_run)
+                lineas.append(f"  • {h.name} → {accion}")
+            except Exception as e:
+                log.exception("[CLEANUP] Error resolviendo %s", h)
+                lineas.append(f"  • {h.name} → ❌ {e}")
+        if len(paths) > 8:
+            lineas.append(f"  ... y {len(paths) - 8} más")
+
+    if dry_run:
+        lineas.append("\n💡 Para ejecutar, manda: 'limpia archivos'")
+
+    return "\n".join(lineas)
+
+
 def procesar_mensaje_admin(texto_usuario: str, to_number: str,
                            imagen=None) -> None:
     """Eduardo escribió desde OWNER_PHONE. Modo asistente ejecutivo.
@@ -1663,6 +1793,18 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         activar_notificaciones()
         ycloud_enviar_texto(to_number, OWNER_PHONE,
                             "🔔 Notificaciones reactivadas.")
+        return
+
+    # ─── Comandos rápidos de cleanup de archivos huérfanos ───
+    if texto_lower in ("huérfanos", "huerfanos", "lista archivos",
+                       "archivos huerfanos", "archivos huérfanos"):
+        ycloud_enviar_texto(to_number, OWNER_PHONE,
+                            cleanup_huerfanos(dry_run=True))
+        return
+    if texto_lower in ("limpia archivos", "limpia huerfanos",
+                       "limpia huérfanos", "cleanup"):
+        ycloud_enviar_texto(to_number, OWNER_PHONE,
+                            cleanup_huerfanos(dry_run=False))
         return
 
     contexto = _inventario_prospectos()
