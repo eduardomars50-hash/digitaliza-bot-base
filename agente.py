@@ -10,6 +10,7 @@ import io
 import re
 import json
 import time
+import html as htmlmod
 import traceback
 import logging
 import threading
@@ -403,15 +404,34 @@ REGLAS ESTRICTAS:
     ("vi un sticker de un pulgar…"); solo reacciona natural (ej. "va,
     entonces te aviso del horario", "sí, también me dio risa jaja").
 
-4c. CONTENIDO QUE NO PUEDES PROCESAR: GIFs, videos, stickers animados,
-    PDFs, ubicaciones, contactos compartidos. NO asumas qué significan,
-    ni si son positivos, negativos, celebratorios o sarcásticos.
+4c. PDFs (documentos): SÍ los puedes leer. El sistema te entrega el
+    PDF como contenido nativo en el mismo turno. Léelo y responde según
+    lo que el cliente esté pidiendo (ej. "esta es mi propuesta actual,
+    ¿cómo la mejoro?", "este es mi catálogo, ¿cómo lo digitalizamos?").
+    Si el PDF es muy largo, prioriza lo que el cliente preguntó
+    explícitamente. Si no preguntó nada, resume lo que viste y pregunta
+    qué quiere hacer con eso.
 
-    - Si llega SOLO (sin texto): "No puedo procesar [GIFs/videos/
-      documentos] por ahora. ¿Me lo describes en texto?"
+4d. VIDEOS: SÍ los puedes ver y oír. El sistema te entrega el video
+    nativo (imagen + audio). Analízalo y responde acorde al contenido.
+    Si solo es del cliente saludando, sé breve. Si muestra su negocio,
+    aprovecha para sugerir cómo Digitaliza ayudaría. Si pide algo
+    específico, respóndelo basado en lo que viste/escuchaste.
+
+4e. LINKS (URLs): cuando el cliente manda un link en su texto, el
+    sistema intenta abrirlo y te entrega el contenido de la página como
+    bloque "[Contenido extraído del link X]: ...". Úsalo para
+    contestar mejor. Si el sistema te dice "[No pude extraer
+    contenido del link...]", responde con honestidad: pídele al cliente
+    que te describa qué hay en el link.
+
+4f. CONTENIDO QUE TODAVÍA NO PUEDES PROCESAR: GIFs, stickers animados,
+    ubicaciones, contactos compartidos. NO asumas qué significan.
+
+    - Si llega SOLO (sin texto): "No puedo procesar [tipo] por ahora.
+      ¿Me lo describes en texto?"
     - Si llega JUNTO con texto que sí entiendes: responde al texto e
-      IGNORA lo no procesable sin comentarlo. NO digas "recibí tu GIF
-      pero no puedo verlo". Solo procesa el texto y avanza.
+      IGNORA lo no procesable sin comentarlo.
 5. Si te preguntan "¿ya trabajan con [mi competencia]?" o cosas parecidas, no
    confirmes ni niegues clientes específicos; di que por confidencialidad no
    compartes nombres pero que trabajan con varios negocios del giro.
@@ -848,6 +868,100 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REFRESH_TOKEN = os.environ.get("GOOGLE_REFRESH_TOKEN", "")
 GOOGLE_CALENDAR_ID = os.environ.get("GOOGLE_CALENDAR_ID", "primary")
 CAL_TIMEZONE = "America/Mexico_City"
+
+# ─── Multimedia: PDF, video, URLs ───
+# Caps conservadores para inline en Gemini (sin upload async).
+MAX_PDF_BYTES = 20_000_000     # 20MB
+MAX_VIDEO_BYTES = 20_000_000   # 20MB
+MAX_URL_BYTES = 250_000        # 250KB HTML descargado
+MAX_URL_TEXT_CHARS = 8_000     # ~2K tokens de texto extraído por URL
+MAX_URLS_POR_TURNO = 3         # cap de URLs a expandir por turno
+
+URL_RE = re.compile(r"https?://[^\s<>\"\'`]+", re.IGNORECASE)
+_URL_TAG_RE = re.compile(r"<[^>]+>")
+_URL_SCRIPT_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1>",
+                            re.IGNORECASE | re.DOTALL)
+_URL_WS_RE = re.compile(r"\s+")
+
+
+def _extraer_texto_de_url(url: str) -> str | None:
+    """Hace GET, recorta a MAX_URL_BYTES, quita scripts/styles/tags,
+    decodifica entities, normaliza whitespace, cap a MAX_URL_TEXT_CHARS.
+    Devuelve None si falla la descarga o el contenido no es text/html."""
+    try:
+        r = requests.get(
+            url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (compatible; DigitalizaBot/1.0; "
+                    "+https://somosdigitaliza.com)"
+                )
+            },
+            timeout=10,
+            stream=True,
+            allow_redirects=True,
+        )
+    except Exception:
+        log.info("[URL] GET %s falló", url[:120])
+        return None
+    if r.status_code != 200:
+        log.info("[URL] %s → HTTP %s", url[:120], r.status_code)
+        return None
+
+    ctype = (r.headers.get("Content-Type") or "").lower()
+    if "text/html" not in ctype and "text/plain" not in ctype:
+        log.info("[URL] %s → ctype %s, ignoro", url[:120], ctype)
+        return None
+
+    raw = r.raw.read(MAX_URL_BYTES, decode_content=True)
+    try:
+        html = raw.decode(r.encoding or "utf-8", errors="ignore")
+    except Exception:
+        html = raw.decode("utf-8", errors="ignore")
+
+    if "html" in ctype:
+        html = _URL_SCRIPT_RE.sub(" ", html)
+        html = _URL_TAG_RE.sub(" ", html)
+        html = htmlmod.unescape(html)
+    texto = _URL_WS_RE.sub(" ", html).strip()
+    if not texto:
+        return None
+    return texto[:MAX_URL_TEXT_CHARS]
+
+
+def _expandir_urls_en_texto(texto: str) -> tuple[str, list[str]]:
+    """Si el texto trae URLs, intenta extraer su contenido y devuelve
+    (texto_original_intacto, [bloques de contexto a anexar al prompt]).
+    Cap a MAX_URLS_POR_TURNO. URLs duplicadas se ignoran."""
+    if not texto:
+        return texto, []
+    encontradas = []
+    vistos: set[str] = set()
+    for m in URL_RE.finditer(texto):
+        u = m.group(0).rstrip(".,;:)!?\"\'")
+        if u in vistos:
+            continue
+        vistos.add(u)
+        encontradas.append(u)
+        if len(encontradas) >= MAX_URLS_POR_TURNO:
+            break
+    if not encontradas:
+        return texto, []
+    bloques = []
+    for u in encontradas:
+        contenido = _extraer_texto_de_url(u)
+        if contenido:
+            bloques.append(
+                f"[Contenido extraído del link {u}]:\n{contenido}"
+            )
+            log.info("[URL] %s → extraídos %d chars", u[:120], len(contenido))
+        else:
+            bloques.append(
+                f"[No pude extraer contenido del link {u} — comenta solo "
+                f"que recibiste el link y pregúntale al cliente de qué se trata.]"
+            )
+    return texto, bloques
+
 
 CAL_RE_CONSULTAR = re.compile(r"\[CALENDARIO:CONSULTAR:(\d{4}-\d{2}-\d{2})\]")
 # fecha : hora : nombre : motivo  (el nombre no debe contener ":")
@@ -1312,6 +1426,10 @@ Tienes acceso a:
 - Lista de prospectos (número, cantidad de mensajes, último contacto, fragmento).
 - La conversación completa de cualquier prospecto que pidas ver.
 - Los leads formalmente capturados (nombre + negocio + ciudad).
+- PDFs, videos e imágenes que Eduardo te mande: los lees/ves nativo.
+- Links que Eduardo mande en su texto: el sistema extrae el contenido
+  de la página y te lo entrega como bloque "[Contenido extraído del
+  link X]". Úsalo para responder mejor.
 
 ESTILO:
 - Responde corto, directo, mexicano natural. Tutea a Eduardo ("va", "listo", "ahí te va").
@@ -1770,17 +1888,20 @@ def cleanup_huerfanos(dry_run: bool = True) -> str:
 
 
 def procesar_mensaje_admin(texto_usuario: str, to_number: str,
-                           imagen=None) -> None:
+                           imagen=None, media: dict | None = None) -> None:
     """Eduardo escribió desde OWNER_PHONE. Modo asistente ejecutivo.
 
     - `texto_usuario`: texto plano. Si el mensaje original era audio, viene
       ya transcrito. Si era imagen, viene la caption (puede ser vacía).
     - `imagen`: PIL.Image opcional si Eduardo mandó una foto. El asistente
       admin la analiza con Gemini Vision.
+    - `media`: dict opcional para PDF/video con keys mime_type/data/etiqueta.
+      Se pasa a Gemini como Part nativo.
     """
-    log.info("[ADMIN] Consulta del dueño: %s%s",
+    log.info("[ADMIN] Consulta del dueño: %s%s%s",
              texto_usuario[:120],
-             " [+imagen]" if imagen is not None else "")
+             " [+imagen]" if imagen is not None else "",
+             f" [+{media.get('etiqueta', 'media')}]" if media else "")
 
     # ─── Comandos rápidos de notificaciones ───
     texto_lower = texto_usuario.lower().strip()
@@ -1838,7 +1959,24 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
     except Exception:
         fecha_hoy = datetime.utcnow().strftime("%Y-%m-%d")
 
-    if imagen is not None:
+    if media is not None:
+        etiqueta = media.get("etiqueta", "archivo")
+        pregunta = texto_usuario or (
+            f"Eduardo te mandó este {etiqueta} sin texto. Descríbele "
+            f"qué hay y pregúntale qué quiere que hagas."
+        )
+        prompt_text = (
+            f"FECHA DE HOY: {fecha_hoy}\n\n"
+            f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\n"
+            f"EDUARDO MANDÓ UN ARCHIVO ({etiqueta}). Léelo/Analízalo y "
+            f"responde a lo que pide.\n\n"
+            f"MENSAJE DE EDUARDO (o caption del archivo):\n{pregunta}"
+        )
+        resp = modelo.generate_content([
+            prompt_text,
+            {"mime_type": media["mime_type"], "data": media["data"]},
+        ])
+    elif imagen is not None:
         pregunta = texto_usuario or (
             "Eduardo te mandó esta imagen sin texto. Descríbela brevemente "
             "y dile si hay algo específico que quiere que hagas con ella."
@@ -1852,6 +1990,10 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         )
         resp = modelo.generate_content([prompt_text, imagen])
     else:
+        # Si Eduardo mandó URL(s), las expandimos como contexto extra.
+        _, bloques_url = _expandir_urls_en_texto(texto_usuario)
+        if bloques_url:
+            texto_usuario = texto_usuario + "\n\n" + "\n\n".join(bloques_url)
         mensaje = (
             f"FECHA DE HOY: {fecha_hoy}\n\n"
             f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\n"
@@ -2036,6 +2178,11 @@ def _process_message_group(msgs: list[dict]) -> None:
                     continue
                 parts.append(cuerpo)
                 texto_guardar_partes.append(cuerpo)
+                # Si el cliente mandó URL(s), expandimos su contenido
+                # como contexto adicional para el modelo.
+                _, bloques_url = _expandir_urls_en_texto(cuerpo)
+                for b in bloques_url:
+                    parts.append(b)
 
             elif tipo in ("audio", "voice"):
                 media_obj = msg.get("audio") or msg.get("voice") or {}
@@ -2121,11 +2268,96 @@ def _process_message_group(msgs: list[dict]) -> None:
                 parts.append(pil)
                 texto_guardar_partes.append("[Sticker]")
 
+            elif tipo == "document":
+                doc_obj = msg.get("document") or {}
+                mime = (doc_obj.get("mime_type") or doc_obj.get("mimeType")
+                        or "application/octet-stream").lower()
+                caption = (doc_obj.get("caption") or "").strip()
+                filename = (doc_obj.get("filename") or "").strip()
+                if "pdf" not in mime:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "Por ahora solo puedo procesar PDFs. "
+                        "¿Me mandas el documento como PDF o me lo describes?"
+                    )
+                    return
+                doc_bytes = ycloud_descargar_media(
+                    doc_obj.get("id", ""), doc_obj
+                )
+                if not doc_bytes:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "No pude descargar el PDF, ¿me lo reenvías?"
+                    )
+                    return
+                if len(doc_bytes) > MAX_PDF_BYTES:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        f"Ese PDF pesa {len(doc_bytes)//1_000_000}MB y solo "
+                        f"puedo procesar hasta {MAX_PDF_BYTES//1_000_000}MB. "
+                        f"¿Me lo mandas más liviano o solo las páginas clave?"
+                    )
+                    return
+                etiqueta = filename or "PDF sin nombre"
+                if caption:
+                    parts.append(
+                        f"El cliente mandó un PDF ({etiqueta}) con este "
+                        f"comentario: {caption}\nAnaliza el PDF y responde."
+                    )
+                else:
+                    parts.append(
+                        f"El cliente mandó este PDF ({etiqueta}). Léelo y "
+                        f"responde según el contexto de la conversación."
+                    )
+                parts.append({"mime_type": "application/pdf",
+                              "data": doc_bytes})
+                texto_guardar_partes.append(
+                    f"[PDF: {etiqueta}]" + (f" — {caption}" if caption else "")
+                )
+
+            elif tipo == "video":
+                vid_obj = msg.get("video") or {}
+                mime = (vid_obj.get("mime_type") or vid_obj.get("mimeType")
+                        or "video/mp4").lower()
+                caption = (vid_obj.get("caption") or "").strip()
+                vid_bytes = ycloud_descargar_media(
+                    vid_obj.get("id", ""), vid_obj
+                )
+                if not vid_bytes:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "No pude descargar el video, ¿me lo reenvías?"
+                    )
+                    return
+                if len(vid_bytes) > MAX_VIDEO_BYTES:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        f"Ese video pesa {len(vid_bytes)//1_000_000}MB y solo "
+                        f"puedo procesar hasta {MAX_VIDEO_BYTES//1_000_000}MB. "
+                        f"¿Me mandas uno más corto?"
+                    )
+                    return
+                if caption:
+                    parts.append(
+                        f"El cliente mandó este video con el comentario: "
+                        f"{caption}\nAnalízalo (imagen y audio) y responde."
+                    )
+                else:
+                    parts.append(
+                        "El cliente mandó este video. Analízalo (imagen y "
+                        "audio) y responde según el contexto de la conversación."
+                    )
+                parts.append({"mime_type": mime, "data": vid_bytes})
+                texto_guardar_partes.append(
+                    "[Video]" + (f" — {caption}" if caption else "")
+                )
+
         if not parts:
             ycloud_enviar_texto(
                 to_number, from_number,
-                "Por ahora solo puedo procesar texto, audio, imágenes y "
-                "stickers. ¿Me lo puedes escribir?"
+                "Por ahora solo puedo procesar texto, audio, imágenes, "
+                "stickers, PDFs y videos. ¿Me lo puedes escribir o reenviar "
+                "en otro formato?"
             )
             return
 
@@ -2213,11 +2445,13 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             _procesar_admin(msg, from_number, to_number, tipo)
             return
 
-        if tipo not in ("text", "audio", "voice", "image", "sticker"):
+        if tipo not in ("text", "audio", "voice", "image", "sticker",
+                        "document", "video"):
             ycloud_enviar_texto(
                 to_number, from_number,
-                "Por ahora solo puedo procesar texto, audio, imágenes y "
-                "stickers. ¿Me lo puedes escribir?"
+                "Por ahora solo puedo procesar texto, audio, imágenes, "
+                "stickers, PDFs y videos. ¿Me lo puedes escribir o reenviar "
+                "en otro formato?"
             )
             return
 
@@ -2287,9 +2521,61 @@ def _procesar_admin(msg: dict, from_number: str, to_number: str, tipo: str) -> N
         procesar_mensaje_admin("(Sticker recibido)", to_number, imagen=pil)
         return
 
+    if tipo == "document":
+        doc_obj = msg.get("document") or {}
+        mime = (doc_obj.get("mime_type") or doc_obj.get("mimeType")
+                or "application/octet-stream").lower()
+        if "pdf" not in mime:
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "Por ahora solo proceso PDFs. Mándalo como PDF.")
+            return
+        doc_bytes = ycloud_descargar_media(doc_obj.get("id", ""), doc_obj)
+        if not doc_bytes:
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "No pude descargar el PDF, ¿me lo reenvías?")
+            return
+        if len(doc_bytes) > MAX_PDF_BYTES:
+            ycloud_enviar_texto(
+                to_number, OWNER_PHONE,
+                f"PDF de {len(doc_bytes)//1_000_000}MB excede el cap de "
+                f"{MAX_PDF_BYTES//1_000_000}MB."
+            )
+            return
+        caption = (doc_obj.get("caption") or "").strip()
+        filename = (doc_obj.get("filename") or "").strip() or "PDF sin nombre"
+        procesar_mensaje_admin(
+            caption or f"(PDF recibido: {filename})", to_number,
+            media={"mime_type": "application/pdf", "data": doc_bytes,
+                   "etiqueta": filename},
+        )
+        return
+
+    if tipo == "video":
+        vid_obj = msg.get("video") or {}
+        mime = (vid_obj.get("mime_type") or vid_obj.get("mimeType")
+                or "video/mp4").lower()
+        vid_bytes = ycloud_descargar_media(vid_obj.get("id", ""), vid_obj)
+        if not vid_bytes:
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "No pude descargar el video, ¿me lo reenvías?")
+            return
+        if len(vid_bytes) > MAX_VIDEO_BYTES:
+            ycloud_enviar_texto(
+                to_number, OWNER_PHONE,
+                f"Video de {len(vid_bytes)//1_000_000}MB excede el cap de "
+                f"{MAX_VIDEO_BYTES//1_000_000}MB."
+            )
+            return
+        caption = (vid_obj.get("caption") or "").strip()
+        procesar_mensaje_admin(
+            caption or "(Video recibido)", to_number,
+            media={"mime_type": mime, "data": vid_bytes, "etiqueta": "video"},
+        )
+        return
+
     ycloud_enviar_texto(
         to_number, OWNER_PHONE,
-        "(Modo admin solo soporta texto, audio, imagen y stickers por ahora.)"
+        "(Modo admin solo soporta texto, audio, imagen, sticker, PDF y video por ahora.)"
     )
 
 
