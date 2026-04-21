@@ -13,6 +13,7 @@ import time
 import traceback
 import logging
 import threading
+import itertools
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -1701,37 +1702,52 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
 # ─────────────────────────────────────────────────────────────
 # Buffer de mensajes entrantes (debouncing por número)
 # ─────────────────────────────────────────────────────────────
-# YCloud entrega cada mensaje como un webhook separado. Si el prospecto
-# manda varios mensajes en ráfaga ("hola", "hola", "buenas"), sin buffer
-# el bot responde cada uno por separado generando saludos duplicados o
-# respuestas contradictorias. Este buffer agrupa mensajes de TEXTO del
-# mismo número que llegan en una ventana corta y los procesa como un
-# solo turno. La regla del prompt "Paciencia y pivoteo" depende de esto.
+# YCloud entrega cada mensaje como un webhook separado y webhook_receive
+# lanza un Thread por evento, así que sin buffer dos mensajes seguidos
+# disparan dos llamadas a Gemini en paralelo. Este buffer agrupa TODOS
+# los mensajes (texto, audio, imagen, sticker) del mismo número que
+# llegan en una ventana corta y los procesa como UN solo turno
+# multimodal a Gemini, respetando el orden cronológico de llegada
+# (importante: si el cliente manda "mira esto" → foto → "¿qué opinas?",
+# el LLM ve los tres parts en ese orden).
 #
 # Disparadores de flush (lo que pase primero):
 #   - BUFFER_WAIT_SECS sin nuevos mensajes (timer se resetea en cada msg)
 #   - BUFFER_MAX_SECS desde el primer mensaje del grupo (techo absoluto)
 #   - BUFFER_MAX_MSGS mensajes acumulados (cap por seguridad)
+#
+# Concurrencia: Procfile corre gunicorn con --workers 1, así que un
+# dict in-memory + Lock + threading.Timer es suficiente. Si en el
+# futuro se escala a multi-worker, hay que migrar a Redis.
 
-BUFFER_WAIT_SECS = 6.0
-BUFFER_MAX_SECS = 25.0
+BUFFER_WAIT_SECS = 10.0
+BUFFER_MAX_SECS = 20.0
 BUFFER_MAX_MSGS = 6
 
-_TEXT_BUFFER: dict[str, dict] = {}
+_MSG_BUFFER: dict[str, dict] = {}
 _BUFFER_LOCK = Lock()
+_slot_seq = itertools.count()
 
 
-def _enqueue_text_msg(phone_key: str, msg: dict) -> None:
-    """Encola un mensaje de texto y programa el flush. Si se alcanza el
-    cap de mensajes o de tiempo, dispara el flush de inmediato."""
+def _enqueue_msg(phone_key: str, msg: dict) -> None:
+    """Encola un mensaje (cualquier tipo) y programa el flush. Si se
+    alcanza el cap de mensajes o de tiempo, dispara el flush de
+    inmediato. Cada slot lleva un id único: si el timer dispara después
+    de que el slot fue reemplazado/flusheado, el flush no procesa de
+    nuevo (cierra la micro-race del timer vs. _enqueue concurrente)."""
     flush_now = False
     msgs_to_flush: list[dict] = []
     with _BUFFER_LOCK:
-        slot = _TEXT_BUFFER.get(phone_key)
+        slot = _MSG_BUFFER.get(phone_key)
         now = time.monotonic()
         if slot is None:
-            slot = {"msgs": [], "first_ts": now, "timer": None}
-            _TEXT_BUFFER[phone_key] = slot
+            slot = {
+                "msgs": [],
+                "first_ts": now,
+                "timer": None,
+                "id": next(_slot_seq),
+            }
+            _MSG_BUFFER[phone_key] = slot
         slot["msgs"].append(msg)
         if slot["timer"] is not None:
             slot["timer"].cancel()
@@ -1741,51 +1757,195 @@ def _enqueue_text_msg(phone_key: str, msg: dict) -> None:
         if too_many or too_old:
             flush_now = True
             msgs_to_flush = slot["msgs"]
-            del _TEXT_BUFFER[phone_key]
+            del _MSG_BUFFER[phone_key]
         else:
-            t = threading.Timer(BUFFER_WAIT_SECS, _flush_text_buffer,
-                                args=(phone_key,))
+            slot_id = slot["id"]
+            t = threading.Timer(
+                BUFFER_WAIT_SECS, _flush_buffer,
+                args=(phone_key, slot_id),
+            )
             t.daemon = True
             slot["timer"] = t
             t.start()
     if flush_now:
-        _process_text_group(msgs_to_flush)
+        _process_message_group(msgs_to_flush)
 
 
-def _flush_text_buffer(phone_key: str) -> None:
+def _flush_buffer(phone_key: str, expected_slot_id: int) -> None:
+    """Flush programado por el timer. Solo procesa si el slot vigente
+    matchea expected_slot_id; si fue reemplazado o ya se vació, no hace
+    nada. Garantía: cada slot se flushea exactamente una vez."""
     with _BUFFER_LOCK:
-        slot = _TEXT_BUFFER.pop(phone_key, None)
-    if slot:
-        _process_text_group(slot["msgs"])
+        slot = _MSG_BUFFER.get(phone_key)
+        if slot is None or slot["id"] != expected_slot_id:
+            return
+        msgs = slot["msgs"]
+        del _MSG_BUFFER[phone_key]
+    _process_message_group(msgs)
 
 
-def _process_text_group(msgs: list[dict]) -> None:
-    """Combina los textos en un mensaje sintético y lo procesa como un
-    solo turno con _bypass_buffer=True."""
+def _process_message_group(msgs: list[dict]) -> None:
+    """Procesa un grupo de mensajes del mismo número como UN turno
+    multimodal a Gemini. Construye `parts` respetando el orden
+    cronológico: cada texto/audio-transcrito/imagen-PIL aparece en la
+    posición en que llegó. Aplica rate limit y jailbreak detection
+    sobre el grupo completo, no por mensaje."""
     if not msgs:
         return
-    bodies = [(m.get("text") or {}).get("body", "").strip() for m in msgs]
-    bodies = [b for b in bodies if b]
-    if not bodies:
-        return
-    combined = "\n".join(bodies)
     base = msgs[0]
-    synthetic = dict(base)
-    synthetic["text"] = {"body": combined}
-    log.info("[BUFFER] Flush de %d msgs para %s, %d chars combinados",
-             len(bodies), base.get("from", "?"), len(combined))
+    from_number = base.get("from", "")
+    to_number = base.get("to", "")
+    if not from_number or not to_number:
+        return
+
+    log.info("[BUFFER] Flush de %d msgs para %s -> %s (tipos: %s)",
+             len(msgs), from_number, to_number,
+             ",".join(m.get("type", "?") for m in msgs))
+
     try:
-        procesar_mensaje_ycloud(synthetic, _bypass_buffer=True)
+        if not _check_rate_limit(normalizar_numero(from_number)):
+            log.warning("[RATE_LIMIT] %s excedió %d msgs/%ds; ignorado",
+                        from_number, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
+            return
+
+        parts: list = []
+        texto_guardar_partes: list[str] = []
+
+        for msg in msgs:
+            tipo = msg.get("type", "")
+            if tipo == "text":
+                cuerpo = (msg.get("text") or {}).get("body", "").strip()
+                if not cuerpo:
+                    continue
+                parts.append(cuerpo)
+                texto_guardar_partes.append(cuerpo)
+
+            elif tipo in ("audio", "voice"):
+                media_obj = msg.get("audio") or msg.get("voice") or {}
+                audio_bytes = ycloud_descargar_media(
+                    media_obj.get("id", ""), media_obj
+                )
+                if not audio_bytes:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "No pude escuchar bien tu audio, ¿me lo puedes escribir?"
+                    )
+                    return
+                transcripcion = transcribir_audio(audio_bytes)
+                if not transcripcion:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "No logré entender el audio. ¿Me lo escribes?"
+                    )
+                    return
+                log.info("[%s] Transcripción: %s", from_number, transcripcion[:120])
+                parts.append(transcripcion)
+                texto_guardar_partes.append(transcripcion)
+
+            elif tipo == "image":
+                img_obj = msg.get("image") or {}
+                caption = (img_obj.get("caption") or "").strip()
+                img_bytes = ycloud_descargar_media(
+                    img_obj.get("id", ""), img_obj
+                )
+                if not img_bytes:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "No pude ver tu imagen, ¿la puedes enviar de nuevo?"
+                    )
+                    return
+                try:
+                    pil = Image.open(io.BytesIO(img_bytes))
+                except Exception:
+                    log.exception("No se pudo abrir imagen")
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "La imagen parece dañada, ¿me la reenvías?"
+                    )
+                    return
+                if caption:
+                    parts.append(caption)
+                else:
+                    parts.append(
+                        "El cliente te envió esta imagen. Analízala y responde "
+                        "según el contexto de la conversación."
+                    )
+                parts.append(pil)
+                texto_guardar_partes.append(
+                    f"[Imagen] {caption}" if caption else "[Imagen]"
+                )
+
+            elif tipo == "sticker":
+                stk_obj = msg.get("sticker") or {}
+                stk_bytes = ycloud_descargar_media(
+                    stk_obj.get("id", ""), stk_obj
+                )
+                if not stk_bytes:
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "No pude ver tu sticker, ¿me lo reenvías?"
+                    )
+                    return
+                try:
+                    pil = Image.open(io.BytesIO(stk_bytes))
+                except Exception:
+                    log.exception("No se pudo abrir sticker")
+                    ycloud_enviar_texto(
+                        to_number, from_number,
+                        "El sticker parece dañado, ¿me lo reenvías?"
+                    )
+                    return
+                parts.append(
+                    "El cliente mandó un sticker. Interprétalo como REACCIÓN "
+                    "emocional (risa, aprobación, pulgar arriba, confusión, "
+                    "corazón, etc.), NO lo describas literalmente. Responde "
+                    "breve y acorde al tono de la conversación, y sigue avanzando."
+                )
+                parts.append(pil)
+                texto_guardar_partes.append("[Sticker]")
+
+        if not parts:
+            ycloud_enviar_texto(
+                to_number, from_number,
+                "Por ahora solo puedo procesar texto, audio, imágenes y "
+                "stickers. ¿Me lo puedes escribir?"
+            )
+            return
+
+        plain_text = " ".join(p for p in parts if isinstance(p, str))
+        if _detect_jailbreak(plain_text):
+            _log_security_event(from_number, "jailbreak", plain_text)
+            ycloud_enviar_texto(
+                to_number, from_number,
+                "No puedo hacer eso. ¿Te puedo ayudar con algo sobre nuestros servicios?"
+            )
+            guardar_mensaje(from_number, "user", plain_text)
+            guardar_mensaje(
+                from_number, "assistant",
+                "No puedo hacer eso. ¿Te puedo ayudar con algo sobre nuestros servicios?"
+            )
+            return
+
+        entrada_usuario = (
+            parts[0] if len(parts) == 1 and isinstance(parts[0], str) else parts
+        )
+        texto_guardar = "\n".join(texto_guardar_partes)
+        _run_llm_pipeline(from_number, to_number, entrada_usuario, texto_guardar)
     except Exception:
-        log.exception("Error procesando grupo de mensajes")
+        log.error("Error procesando grupo de mensajes:\n%s", traceback.format_exc())
 
 
 # ─────────────────────────────────────────────────────────────
 # Procesamiento de un mensaje entrante YCloud
 # ─────────────────────────────────────────────────────────────
 
-def procesar_mensaje_ycloud(msg: dict, _bypass_buffer: bool = False) -> None:
-    """
+def procesar_mensaje_ycloud(msg: dict) -> None:
+    """Entry point por mensaje de YCloud. Filtra multi-tenant, separa
+    admin (que se procesa instantáneo, sin buffer), y para clientes
+    encola al buffer. El procesamiento real (rate limit, jailbreak,
+    Gemini, calendario, lead, envío) ocurre desde el flush del buffer
+    en _process_message_group → _run_llm_pipeline.
+
     Estructura de YCloud (evento whatsapp.inbound_message.received):
     {
       "id": "...",
@@ -1806,9 +1966,8 @@ def procesar_mensaje_ycloud(msg: dict, _bypass_buffer: bool = False) -> None:
             log.warning("Mensaje sin from/to: %s", msg)
             return
 
-        # ─── FILTRO MULTI-TENANT DE YCLOUD ───
-        # YCloud manda webhooks de TODOS los números del portfolio. Solo procesamos
-        # los mensajes que fueron enviados AL número oficial de Digitaliza (BOT_PHONE).
+        # YCloud manda webhooks de TODOS los números del portfolio. Solo
+        # procesamos los mensajes enviados AL número oficial de Digitaliza.
         if BOT_PHONE and normalizar_numero(to_number) != normalizar_numero(BOT_PHONE):
             log.info("[SKIP] Mensaje para %s (no es BOT_PHONE=%s); ignorado",
                      to_number, BOT_PHONE)
@@ -1816,290 +1975,190 @@ def procesar_mensaje_ycloud(msg: dict, _bypass_buffer: bool = False) -> None:
 
         log.info("[IN  %s -> %s] type=%s", from_number, to_number, tipo)
 
-        # ─── BUFFER DE TEXTO (debouncing) ───
-        # Aplica a TODOS los mensajes de texto (cliente y admin). Si el
-        # prospecto/dueño manda varios "hola" en ráfaga, los agrupamos en
-        # un solo turno. Cuando _bypass_buffer=True venimos del flush con
-        # el mensaje sintético combinado y procesamos normal.
-        if tipo == "text" and not _bypass_buffer:
-            cuerpo_check = (msg.get("text") or {}).get("body", "").strip()
-            if cuerpo_check:
-                _enqueue_text_msg(normalizar_numero(from_number), msg)
-                return
-
-        # ─── MODO ADMIN ───
-        # Si el dueño escribe al bot desde OWNER_PHONE, entra al asistente ejecutivo
-        # interno en vez del flujo de ventas. El admin se evalúa ANTES del rate limit
-        # para que Eduardo no pueda bloquearse a sí mismo.
+        # Modo admin: el dueño escribe al bot desde OWNER_PHONE. Va al
+        # asistente ejecutivo y NO pasa por el buffer (Eduardo necesita
+        # respuesta inmediata, no debounce).
         es_admin = (
             OWNER_PHONE
             and normalizar_numero(from_number) == normalizar_numero(OWNER_PHONE)
         )
         if es_admin:
-            if tipo == "text":
-                cuerpo = (msg.get("text") or {}).get("body", "").strip()
-                if cuerpo:
-                    procesar_mensaje_admin(cuerpo, to_number)
-                return
+            _procesar_admin(msg, from_number, to_number, tipo)
+            return
 
-            if tipo in ("audio", "voice"):
-                media_obj = msg.get("audio") or msg.get("voice") or {}
-                media_id = media_obj.get("id", "")
-                audio_bytes = ycloud_descargar_media(media_id, media_obj)
-                if not audio_bytes:
-                    ycloud_enviar_texto(to_number, OWNER_PHONE,
-                                        "No pude descargar tu nota de voz, ¿me la reenvías?")
-                    return
-                transcripcion = transcribir_audio(audio_bytes)
-                if not transcripcion:
-                    ycloud_enviar_texto(to_number, OWNER_PHONE,
-                                        "No logré entender el audio, ¿me lo reenvías o lo escribes?")
-                    return
-                log.info("[ADMIN] Audio transcrito: %s", transcripcion[:120])
-                procesar_mensaje_admin(transcripcion, to_number)
-                return
-
-            if tipo == "image":
-                img_obj = msg.get("image") or {}
-                media_id = img_obj.get("id", "")
-                caption = (img_obj.get("caption") or "").strip()
-                img_bytes = ycloud_descargar_media(media_id, img_obj)
-                if not img_bytes:
-                    ycloud_enviar_texto(to_number, OWNER_PHONE,
-                                        "No pude descargar la imagen, ¿me la reenvías?")
-                    return
-                try:
-                    pil = Image.open(io.BytesIO(img_bytes))
-                except Exception:
-                    log.exception("[ADMIN] No se pudo abrir imagen")
-                    ycloud_enviar_texto(to_number, OWNER_PHONE,
-                                        "La imagen parece dañada, ¿me la reenvías?")
-                    return
-                procesar_mensaje_admin(caption, to_number, imagen=pil)
-                return
-
-            if tipo == "sticker":
-                stk_obj = msg.get("sticker") or {}
-                media_id = stk_obj.get("id", "")
-                stk_bytes = ycloud_descargar_media(media_id, stk_obj)
-                if not stk_bytes:
-                    ycloud_enviar_texto(to_number, OWNER_PHONE,
-                                        "No pude descargar el sticker, ¿me lo reenvías?")
-                    return
-                try:
-                    # WebP nativo en PIL. Si es animado, PIL da el primer frame.
-                    pil = Image.open(io.BytesIO(stk_bytes))
-                except Exception:
-                    log.exception("[ADMIN] No se pudo abrir sticker")
-                    ycloud_enviar_texto(to_number, OWNER_PHONE,
-                                        "El sticker parece dañado, ¿me lo reenvías?")
-                    return
-                procesar_mensaje_admin("(Sticker recibido)", to_number, imagen=pil)
-                return
-
-            # Otros tipos (video, documento, ubicación): no soportados
+        if tipo not in ("text", "audio", "voice", "image", "sticker"):
             ycloud_enviar_texto(
-                to_number, OWNER_PHONE,
-                "(Modo admin solo soporta texto, audio, imagen y stickers por ahora.)"
+                to_number, from_number,
+                "Por ahora solo puedo procesar texto, audio, imágenes y "
+                "stickers. ¿Me lo puedes escribir?"
             )
             return
 
-        # ─── RATE LIMITING ─── (no aplica al dueño, ya retornó arriba)
-        # Bypass cuando venimos del flush del buffer: el rate ya se evaluó
-        # cuando entró el primer mensaje del grupo (ver buffer arriba — el
-        # buffer corre antes del modo admin pero después del filtro
-        # multi-tenant; si saturamos rate_limit, igual el slot se llena).
-        if not _bypass_buffer:
-            if not _check_rate_limit(normalizar_numero(from_number)):
-                log.warning("[RATE_LIMIT] %s excedió %d msgs/%ds; ignorado",
-                            from_number, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
-                return
-
-        entrada_usuario = None
-        texto_guardar = ""
-
-        if tipo == "text":
-            cuerpo = (msg.get("text") or {}).get("body", "").strip()
-            if not cuerpo:
-                return
-            # ─── DETECCIÓN DE JAILBREAK ───
-            if _detect_jailbreak(cuerpo):
-                _log_security_event(from_number, "jailbreak", cuerpo)
-                ycloud_enviar_texto(to_number, from_number,
-                                    "No puedo hacer eso. ¿Te puedo ayudar con algo sobre nuestros servicios?")
-                guardar_mensaje(from_number, "user", cuerpo)
-                guardar_mensaje(from_number, "assistant",
-                                "No puedo hacer eso. ¿Te puedo ayudar con algo sobre nuestros servicios?")
-                return
-            entrada_usuario = cuerpo
-            texto_guardar = cuerpo
-
-        elif tipo == "audio" or tipo == "voice":
-            media_obj = msg.get("audio") or msg.get("voice") or {}
-            media_id = media_obj.get("id", "")
-            audio_bytes = ycloud_descargar_media(media_id, media_obj)
-            if not audio_bytes:
-                ycloud_enviar_texto(to_number, from_number,
-                                    "No pude escuchar bien tu audio, ¿me lo puedes escribir?")
-                return
-            transcripcion = transcribir_audio(audio_bytes)
-            if not transcripcion:
-                ycloud_enviar_texto(to_number, from_number,
-                                    "No logré entender el audio. ¿Me lo escribes?")
-                return
-            log.info("[%s] Transcripción: %s", from_number, transcripcion[:120])
-            # Mandamos solo el texto, sin indicar que fue audio, para que Gemini
-            # responda naturalmente como si fuera un mensaje de texto normal.
-            entrada_usuario = transcripcion
-            texto_guardar = transcripcion
-
-        elif tipo == "image":
-            img_obj = msg.get("image") or {}
-            media_id = img_obj.get("id", "")
-            caption = (img_obj.get("caption") or "").strip()
-            img_bytes = ycloud_descargar_media(media_id, img_obj)
-            if not img_bytes:
-                ycloud_enviar_texto(to_number, from_number,
-                                    "No pude ver tu imagen, ¿la puedes enviar de nuevo?")
-                return
-            try:
-                pil = Image.open(io.BytesIO(img_bytes))
-            except Exception:
-                log.exception("No se pudo abrir imagen")
-                ycloud_enviar_texto(to_number, from_number,
-                                    "La imagen parece dañada, ¿me la reenvías?")
-                return
-            texto_acompanante = caption or "El cliente te envió esta imagen. Analízala y responde según el contexto de la conversación."
-            entrada_usuario = [texto_acompanante, pil]
-            texto_guardar = f"[Imagen] {caption}" if caption else "[Imagen]"
-
-        elif tipo == "sticker":
-            stk_obj = msg.get("sticker") or {}
-            media_id = stk_obj.get("id", "")
-            stk_bytes = ycloud_descargar_media(media_id, stk_obj)
-            if not stk_bytes:
-                ycloud_enviar_texto(to_number, from_number,
-                                    "No pude ver tu sticker, ¿me lo reenvías?")
-                return
-            try:
-                # PIL soporta WebP nativo. Si el sticker es animado, toma el primer
-                # frame — suficiente para entender la reacción emocional.
-                pil = Image.open(io.BytesIO(stk_bytes))
-            except Exception:
-                log.exception("No se pudo abrir sticker")
-                ycloud_enviar_texto(to_number, from_number,
-                                    "El sticker parece dañado, ¿me lo reenvías?")
-                return
-            texto_acompanante = (
-                "El cliente mandó un sticker. Interprétalo como REACCIÓN "
-                "emocional (risa, aprobación, pulgar arriba, confusión, "
-                "corazón, etc.), NO lo describas literalmente. Responde breve "
-                "y acorde al tono de la conversación, y sigue avanzando."
-            )
-            entrada_usuario = [texto_acompanante, pil]
-            texto_guardar = "[Sticker]"
-
-        else:
-            ycloud_enviar_texto(to_number, from_number,
-                                "Por ahora solo puedo procesar texto, audio, imágenes y stickers. ¿Me lo puedes escribir?")
-            return
-
-        guardar_mensaje(from_number, "user", texto_guardar)
-
-        # ─── NOTIFICACIÓN: nuevo prospecto ───
-        try:
-            notificar_nuevo_prospecto(from_number, texto_guardar)
-        except Exception:
-            log.exception("Error en notificar_nuevo_prospecto")
-
-        respuesta_cruda = preguntar_gemini(from_number, entrada_usuario)
-
-        # ─── CALENDARIO: round-trip si Gemini pidió consultar ───
-        # Hasta 2 iteraciones por si pide otra fecha después de la primera.
-        for _ in range(2):
-            m_cons = CAL_RE_CONSULTAR.search(respuesta_cruda)
-            if not m_cons:
-                break
-            fecha_cons = m_cons.group(1)
-            libres = consultar_disponibilidad(fecha_cons)
-            if not libres:
-                ctx = (
-                    f"[SISTEMA: No hay horarios disponibles el {fecha_cons} "
-                    f"(domingo, día no laborable, o agenda llena). "
-                    f"Ofrece al prospecto otro día cercano.]"
-                )
-            else:
-                ctx = (
-                    f"[SISTEMA: Horarios libres el {fecha_cons}: "
-                    f"{', '.join(libres)}. Preséntalos al prospecto de forma "
-                    f"natural (estilo WhatsApp, sin listas) y pregúntale cuál "
-                    f"le acomoda. No incluyas otra señal [CALENDARIO:...] "
-                    f"en esta respuesta.]"
-                )
-            respuesta_cruda = preguntar_gemini(
-                from_number, ctx, n_contexto=CONTEXTO_EXTENDIDO
-            )
-
-        # ─── CALENDARIO: ejecutar AGENDAR si Gemini lo emitió ───
-        cita_agendada: dict | None = None
-        m_ag = CAL_RE_AGENDAR.search(respuesta_cruda)
-        if m_ag:
-            fecha_ag = m_ag.group(1)
-            hora_ag = m_ag.group(2)
-            nombre_ag = m_ag.group(3).strip()
-            motivo_ag = m_ag.group(4).strip()
-            ok = agendar_cita(fecha_ag, hora_ag, nombre_ag, from_number, motivo_ag)
-            if ok:
-                cita_agendada = {
-                    "fecha": fecha_ag, "hora": hora_ag,
-                    "nombre": nombre_ag, "motivo": motivo_ag,
-                }
-            else:
-                log.warning("[CAL] agendar_cita falló: %s %s %s",
-                            fecha_ag, hora_ag, nombre_ag)
-            respuesta_cruda = CAL_RE_AGENDAR.sub("", respuesta_cruda).strip()
-
-        respuesta, datos_lead = extraer_lead(respuesta_cruda)
-        if datos_lead and not lead_ya_notificado(from_number):
-            guardar_lead(from_number, datos_lead)
-            try:
-                notificar_dueno(to_number, from_number, datos_lead)
-            except Exception:
-                log.exception("Error notificando al dueño")
-
-        # ─── EVENTO: quiere contratar ───
-        respuesta, quiere_contratar = _extraer_evento_contratar(respuesta)
-        if quiere_contratar:
-            try:
-                notificar_quiere_contratar(from_number)
-            except Exception:
-                log.exception("Error en notificar_quiere_contratar")
-
-        guardar_mensaje(from_number, "assistant", respuesta)
-        if respuesta:
-            ycloud_enviar_texto(to_number, from_number, respuesta)
-
-        # ─── NOTIFICACIÓN: cita agendada ───
-        if cita_agendada:
-            try:
-                _notificar_owner(
-                    f"📅 Nueva cita agendada\n"
-                    f"Nombre: {cita_agendada['nombre']}\n"
-                    f"Número: {from_number}\n"
-                    f"Fecha: {cita_agendada['fecha']} a las {cita_agendada['hora']}\n"
-                    f"Motivo: {cita_agendada['motivo']}"
-                )
-            except Exception:
-                log.exception("Error notificando cita al dueño")
-
-        # ─── NOTIFICACIÓN: lead calificado (post-respuesta) ───
-        try:
-            notificar_lead_calificado(from_number)
-        except Exception:
-            log.exception("Error en notificar_lead_calificado")
-
+        _enqueue_msg(normalizar_numero(from_number), msg)
     except Exception:
         log.error("Error procesando mensaje:\n%s", traceback.format_exc())
+
+
+def _procesar_admin(msg: dict, from_number: str, to_number: str, tipo: str) -> None:
+    """Pipeline admin (Eduardo escribiendo desde OWNER_PHONE). Igual que
+    antes: descarga media si aplica, transcribe audio, abre imagen, y
+    delega a procesar_mensaje_admin."""
+    if tipo == "text":
+        cuerpo = (msg.get("text") or {}).get("body", "").strip()
+        if cuerpo:
+            procesar_mensaje_admin(cuerpo, to_number)
+        return
+
+    if tipo in ("audio", "voice"):
+        media_obj = msg.get("audio") or msg.get("voice") or {}
+        audio_bytes = ycloud_descargar_media(media_obj.get("id", ""), media_obj)
+        if not audio_bytes:
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "No pude descargar tu nota de voz, ¿me la reenvías?")
+            return
+        transcripcion = transcribir_audio(audio_bytes)
+        if not transcripcion:
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "No logré entender el audio, ¿me lo reenvías o lo escribes?")
+            return
+        log.info("[ADMIN] Audio transcrito: %s", transcripcion[:120])
+        procesar_mensaje_admin(transcripcion, to_number)
+        return
+
+    if tipo == "image":
+        img_obj = msg.get("image") or {}
+        caption = (img_obj.get("caption") or "").strip()
+        img_bytes = ycloud_descargar_media(img_obj.get("id", ""), img_obj)
+        if not img_bytes:
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "No pude descargar la imagen, ¿me la reenvías?")
+            return
+        try:
+            pil = Image.open(io.BytesIO(img_bytes))
+        except Exception:
+            log.exception("[ADMIN] No se pudo abrir imagen")
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "La imagen parece dañada, ¿me la reenvías?")
+            return
+        procesar_mensaje_admin(caption, to_number, imagen=pil)
+        return
+
+    if tipo == "sticker":
+        stk_obj = msg.get("sticker") or {}
+        stk_bytes = ycloud_descargar_media(stk_obj.get("id", ""), stk_obj)
+        if not stk_bytes:
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "No pude descargar el sticker, ¿me lo reenvías?")
+            return
+        try:
+            pil = Image.open(io.BytesIO(stk_bytes))
+        except Exception:
+            log.exception("[ADMIN] No se pudo abrir sticker")
+            ycloud_enviar_texto(to_number, OWNER_PHONE,
+                                "El sticker parece dañado, ¿me lo reenvías?")
+            return
+        procesar_mensaje_admin("(Sticker recibido)", to_number, imagen=pil)
+        return
+
+    ycloud_enviar_texto(
+        to_number, OWNER_PHONE,
+        "(Modo admin solo soporta texto, audio, imagen y stickers por ahora.)"
+    )
+
+
+def _run_llm_pipeline(from_number: str, to_number: str,
+                      entrada_usuario, texto_guardar: str) -> None:
+    """Pipeline post-buffer común: persiste el turno del usuario,
+    notifica nuevo prospecto, llama a Gemini, hace round-trip de
+    calendario, agenda cita si aplica, extrae lead, detecta evento
+    "quiere contratar", envía respuesta y dispara notificaciones de
+    cita y lead calificado."""
+    guardar_mensaje(from_number, "user", texto_guardar)
+
+    try:
+        notificar_nuevo_prospecto(from_number, texto_guardar)
+    except Exception:
+        log.exception("Error en notificar_nuevo_prospecto")
+
+    respuesta_cruda = preguntar_gemini(from_number, entrada_usuario)
+
+    for _ in range(2):
+        m_cons = CAL_RE_CONSULTAR.search(respuesta_cruda)
+        if not m_cons:
+            break
+        fecha_cons = m_cons.group(1)
+        libres = consultar_disponibilidad(fecha_cons)
+        if not libres:
+            ctx = (
+                f"[SISTEMA: No hay horarios disponibles el {fecha_cons} "
+                f"(domingo, día no laborable, o agenda llena). "
+                f"Ofrece al prospecto otro día cercano.]"
+            )
+        else:
+            ctx = (
+                f"[SISTEMA: Horarios libres el {fecha_cons}: "
+                f"{', '.join(libres)}. Preséntalos al prospecto de forma "
+                f"natural (estilo WhatsApp, sin listas) y pregúntale cuál "
+                f"le acomoda. No incluyas otra señal [CALENDARIO:...] "
+                f"en esta respuesta.]"
+            )
+        respuesta_cruda = preguntar_gemini(
+            from_number, ctx, n_contexto=CONTEXTO_EXTENDIDO
+        )
+
+    cita_agendada: dict | None = None
+    m_ag = CAL_RE_AGENDAR.search(respuesta_cruda)
+    if m_ag:
+        fecha_ag = m_ag.group(1)
+        hora_ag = m_ag.group(2)
+        nombre_ag = m_ag.group(3).strip()
+        motivo_ag = m_ag.group(4).strip()
+        ok = agendar_cita(fecha_ag, hora_ag, nombre_ag, from_number, motivo_ag)
+        if ok:
+            cita_agendada = {
+                "fecha": fecha_ag, "hora": hora_ag,
+                "nombre": nombre_ag, "motivo": motivo_ag,
+            }
+        else:
+            log.warning("[CAL] agendar_cita falló: %s %s %s",
+                        fecha_ag, hora_ag, nombre_ag)
+        respuesta_cruda = CAL_RE_AGENDAR.sub("", respuesta_cruda).strip()
+
+    respuesta, datos_lead = extraer_lead(respuesta_cruda)
+    if datos_lead and not lead_ya_notificado(from_number):
+        guardar_lead(from_number, datos_lead)
+        try:
+            notificar_dueno(to_number, from_number, datos_lead)
+        except Exception:
+            log.exception("Error notificando al dueño")
+
+    respuesta, quiere_contratar = _extraer_evento_contratar(respuesta)
+    if quiere_contratar:
+        try:
+            notificar_quiere_contratar(from_number)
+        except Exception:
+            log.exception("Error en notificar_quiere_contratar")
+
+    guardar_mensaje(from_number, "assistant", respuesta)
+    if respuesta:
+        ycloud_enviar_texto(to_number, from_number, respuesta)
+
+    if cita_agendada:
+        try:
+            _notificar_owner(
+                f"📅 Nueva cita agendada\n"
+                f"Nombre: {cita_agendada['nombre']}\n"
+                f"Número: {from_number}\n"
+                f"Fecha: {cita_agendada['fecha']} a las {cita_agendada['hora']}\n"
+                f"Motivo: {cita_agendada['motivo']}"
+            )
+        except Exception:
+            log.exception("Error notificando cita al dueño")
+
+    try:
+        notificar_lead_calificado(from_number)
+    except Exception:
+        log.exception("Error en notificar_lead_calificado")
 
 
 # ─────────────────────────────────────────────────────────────
