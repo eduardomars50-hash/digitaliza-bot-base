@@ -1453,6 +1453,21 @@ ESTILO:
 - Nunca inventes datos. Si no lo sabes, "no tengo ese dato".
 - Emojis mínimos, solo si ayudan.
 
+VOCABULARIO (OBLIGATORIO) — Eduardo es dueño de negocio, no programador:
+- PROHIBIDO usar jerga técnica: "log", "logs", "webhook", "API",
+  "endpoint", "HTTP", "status code", "error 400/500", "payload",
+  "JSON", "backend", "frontend", "caché", "token", "parser", "script".
+- Usa sinónimos de dueño de negocio:
+  · "log" → "historial", "registro de mensajes", "lo que me llegó"
+  · "webhook fallido" / "error HTTP" → "WhatsApp rechazó el envío",
+    "Meta no lo dejó pasar", "el mensaje no pudo salir"
+  · "API de YCloud" / "sistema externo" → "WhatsApp", "el sistema"
+  · "status code 400" → (no lo digas, solo el efecto: "no llegó")
+- Si algo técnico realmente no se puede explicar en términos simples,
+  di: "mejor eso lo ve tu desarrollador."
+- Si te asoma un término técnico al redactar, re-escríbelo antes de
+  mandarle la respuesta a Eduardo.
+
 COMANDOS QUE PUEDES EMITIR (el bot los ejecuta y elimina del mensaje antes de
 mandártelo; NO los muestres, NO los menciones al usuario final).
 
@@ -1680,10 +1695,21 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
         if not cuerpo:
             notas.append(f"⚠️ CMD_ENVIAR a {phone_e164} sin cuerpo, no envié nada.")
             return ""
-        # Siempre intentamos. Si Meta/YCloud rechaza (ventana 24h o
-        # cualquier otro motivo), capturamos el error real y se lo
-        # reportamos a Eduardo en vez de bloquear preventivamente.
-        ventana_abierta = ventana_24h_abierta(phone_norm)
+        # Pre-check ventana 24h. Confirmado el 2026-04-21: YCloud acepta
+        # la llamada pero Meta rechaza ~2s después por webhook failed.
+        # Bloquear upfront es más honesto que reportar un falso positivo.
+        if not ventana_24h_abierta(phone_norm):
+            notas.append(
+                f"⚠️ {phone_e164}: no le puedo escribir. Ese cliente no "
+                f"te ha escrito en más de 24 horas y WhatsApp bloquea "
+                f"los mensajes libres en ese caso (ya lo probamos hoy: "
+                f"el sistema parecía mandarlo pero en realidad no "
+                f"llegaba). Para escribirle de nuevo necesitamos una "
+                f"plantilla aprobada por Meta (aún no la tenemos). "
+                f"Alternativa: pídele al cliente que te escriba él "
+                f"primero y se vuelve a abrir la ventana."
+            )
+            return ""
         from_number = BOT_PHONE or "525631832858"
         from_e164 = "+" + normalizar_numero(from_number)
         try:
@@ -1692,20 +1718,14 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
             notas.append(f"❌ Error enviando a {phone_e164}: {e}")
             return ""
         if ok:
-            extra = "" if ventana_abierta else " (fuera de 24h; llegó igual)"
-            notas.append(f"✅ Enviado a {phone_e164}{extra}: \"{cuerpo[:120]}\"")
+            notas.append(f"✅ Enviado a {phone_e164}: \"{cuerpo[:120]}\"")
             try:
                 guardar_mensaje(phone_norm, "assistant",
                                 f"[ENVIADO POR EDUARDO] {cuerpo}")
             except Exception:
                 pass
         else:
-            hint = ""
-            low = err.lower()
-            if ("24" in low and ("hour" in low or "hora" in low)) or "template" in low:
-                hint = (" — se ve que Meta rechazó por ventana 24h. "
-                        "Requiere plantilla aprobada.")
-            notas.append(f"❌ No se pudo enviar a {phone_e164}: {err}{hint}")
+            notas.append(f"❌ No se pudo enviar a {phone_e164}: {err}")
         return ""
 
     texto = CMD_ENVIAR_RE.sub(_enviar, texto)
