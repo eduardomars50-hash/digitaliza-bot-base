@@ -2,7 +2,8 @@ NOMBRE: Digitaliza
 TIPO: Agencia de automatización e inteligencia artificial
 DIRECCIÓN: Mérida, Yucatán, México
 TELÉFONO: +52 56 3183 2858
-HORARIO: El bot responde 24/7. Asesores humanos: Lunes a Viernes 9:00-19:00, Sábado 10:00-14:00.
-WEB: digitaliza.mx
+HORARIO: El bot responde 24/7. No hay horario fijo de asesores. Horario disponible para AGENDAR llamadas: Lunes a Viernes 15:00-20:00 (CDT). Fines de semana: el prospecto debe coordinar directamente con un asesor por mensaje.
+WEB: somosdigitaliza.com
+INSTAGRAM: @digitaliza_IA
 DUEÑO: Eduardo Mares Gutiérrez
-NOTAS: Agencia enfocada en negocios locales de Mérida (salones, barberías, consultorios médicos y dentales, veterinarias, restaurantes). Coexistencia con WhatsApp normal del dueño.
+NOTAS: Agencia enfocada en negocios locales de Mérida (salones, barberías, consultorios médicos y dentales, veterinarias, restaurantes). Operamos remoto — las llamadas son por Google Meet o Zoom. Coexistencia con WhatsApp normal del dueño.
