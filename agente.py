@@ -546,12 +546,10 @@ def guardar_mensaje(phone: str, role: str, content: str) -> None:
             json.dumps(historial, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        # Invalida caché de perfil al guardar nuevo mensaje de usuario
-        if role == "user":
-            try:
-                (PERFILES_DIR / f"{normalizar_numero(phone)}.json").unlink(missing_ok=True)
-            except Exception:
-                pass
+        # NO invalidamos el caché de perfil aquí; _perfil_cliente compara
+        # mtimes (conv vs perfil) y regenera lazy solo cuando alguien lo
+        # pide y el conv cambió. Esto evita doble llamada Gemini por
+        # turno (una para perfil, otra para responder).
 
 
 # ─────────────────────────────────────────────────────────────
@@ -632,11 +630,54 @@ def _historial_a_gemini(historial: list[dict]) -> list[dict]:
     return salida
 
 
+def _bloque_perfil_historial(phone: str) -> list[dict]:
+    """Devuelve un par sintético user/model con el PERFIL DEL CLIENTE
+    extraído de toda la conversación (no solo de los últimos N msgs que
+    le pasamos al modelo). Vacío si no hay perfil utilizable.
+
+    Esto resuelve el caso "el prospecto dijo su ciudad hace 30 mensajes,
+    el modelo solo ve los últimos 5 y vuelve a preguntar la ciudad".
+    El perfil ya está cacheado en /data/perfiles/<phone>.json y se
+    regenera lazy cuando el conv cambia (ver _perfil_cliente)."""
+    try:
+        perfil = _perfil_cliente(phone)
+    except Exception:
+        log.exception("[PERFIL] Error obteniendo perfil de %s", phone)
+        return []
+    if not perfil:
+        return []
+    campos_orden = [
+        ("nombre", "nombre"),
+        ("negocio", "negocio"),
+        ("tipo_negocio", "giro"),
+        ("ciudad", "ciudad"),
+        ("interes", "interés"),
+    ]
+    lineas = []
+    for k, etiqueta in campos_orden:
+        v = (perfil.get(k) or "").strip()
+        if v and v.lower() not in ("desconocido", "?", "n/a", "none"):
+            lineas.append(f"- {etiqueta}: {v}")
+    if not lineas:
+        return []
+    bloque = (
+        "[PERFIL DEL CLIENTE — datos persistentes extraídos de la "
+        "conversación completa, no se los vuelvas a preguntar]\n"
+        + "\n".join(lineas)
+    )
+    return [
+        {"role": "user", "parts": [bloque]},
+        {"role": "model",
+         "parts": ["Listo, tengo ese perfil presente para esta conversación."]},
+    ]
+
+
 def preguntar_gemini(phone: str, entrada_usuario, n_contexto: int = CONTEXTO_DEFAULT) -> str:
     """entrada_usuario puede ser str o lista [texto, PIL.Image]."""
     modelo = _build_model()
     historial = cargar_historial(phone)[-n_contexto:]
-    chat = modelo.start_chat(history=_historial_a_gemini(historial))
+    historia_gemini = _bloque_perfil_historial(phone) + _historial_a_gemini(historial)
+    chat = modelo.start_chat(history=historia_gemini)
     resp = chat.send_message(entrada_usuario)
     texto = (resp.text or "").strip()
 
@@ -645,7 +686,10 @@ def preguntar_gemini(phone: str, entrada_usuario, n_contexto: int = CONTEXTO_DEF
                  phone, CONTEXTO_EXTENDIDO)
         modelo = _build_model()
         historial_ext = cargar_historial(phone)[-CONTEXTO_EXTENDIDO:]
-        chat = modelo.start_chat(history=_historial_a_gemini(historial_ext))
+        historia_gemini_ext = (
+            _bloque_perfil_historial(phone) + _historial_a_gemini(historial_ext)
+        )
+        chat = modelo.start_chat(history=historia_gemini_ext)
         aviso = entrada_usuario
         if isinstance(entrada_usuario, list):
             aviso = ["[SISTEMA: aquí tienes más contexto, responde al usuario]"] + entrada_usuario
