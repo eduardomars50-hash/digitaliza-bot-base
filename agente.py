@@ -1297,6 +1297,36 @@ mandártelo; NO los muestres, NO los menciones al usuario final).
      [CMD_VER: +52XXXXXXXXXX]
    - Te devuelvo la conversación entera en el siguiente turno.
 
+4. AGENDAR cita en Google Calendar de Eduardo (cuando te pide "agéndame una
+   cita con X", "ponme una junta a las Y con Z", "métele al calendario una
+   reunión", "agenda llamada con +52...", etc.):
+
+   a) Si Eduardo te dio fecha y hora completas:
+        [CALENDARIO:AGENDAR:YYYY-MM-DD:HH:MM:Nombre persona:motivo breve]
+      - El nombre NO debe contener ":" (usa coma o guion si hace falta).
+      - La hora va en formato 24h, p.ej. 15:30, 09:00.
+      - Después del tag, agrega una confirmación corta a Eduardo, p.ej.
+        "Listo, agendé a Francisco el viernes 25 a las 4pm."
+      - El sistema crea el evento de 1h en Google Calendar y te confirma o
+        te avisa si falló.
+
+   b) Si Eduardo solo te dio el día y quiere ver qué tienes libre antes
+      de agendar:
+        [CALENDARIO:CONSULTAR:YYYY-MM-DD]
+      - Una sola línea con el tag, sin texto extra. El sistema te
+        responde con los horarios libres de ese día y tú se los pasas a
+        Eduardo de forma natural.
+
+   c) Si Eduardo dice "agéndalo" sin fecha clara, pídela tú: "¿Para qué
+      día y hora?" — NO agendes a ciegas ni inventes fecha.
+
+   d) Para fechas relativas ("mañana", "el viernes", "en 3 días"), usa
+      como referencia el campo "FECHA DE HOY" que viene en el contexto.
+
+   e) NUNCA digas "no tengo acceso a Google Calendar" — sí lo tienes,
+      úsalo. Solo si el sistema te avisa de un error de Calendar
+      (mensaje "[SISTEMA: error Calendar...]"), reportárselo a Eduardo.
+
 COMANDOS NATURALES (sin tag, tú mismo los atiendes con el contexto):
 - "resumen" / "leads" / "quién me ha escrito" → resume todos los prospectos del
   inventario que ya tienes.
@@ -1514,6 +1544,56 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
     return texto.strip(), ver
 
 
+def _procesar_calendar_admin(respuesta: str) -> str:
+    """Si la respuesta del modelo admin trae [CALENDARIO:CONSULTAR:...]
+    o [CALENDARIO:AGENDAR:...], los ejecuta y limpia los tags. Devuelve
+    la respuesta lista para mandarse al dueño con la confirmación o el
+    listado de horarios libres anexado."""
+    out = respuesta
+
+    # CONSULTAR: mostrar disponibilidad directo, sin segundo round-trip a Gemini.
+    m_cons = CAL_RE_CONSULTAR.search(out)
+    if m_cons:
+        fecha = m_cons.group(1)
+        try:
+            libres = consultar_disponibilidad(fecha)
+        except Exception:
+            log.exception("[ADMIN][CAL] Error consultando disponibilidad")
+            libres = None
+        if libres is None:
+            disp = f"\n\n⚠️ No pude consultar Google Calendar el {fecha}. Revisa logs."
+        elif libres:
+            disp = f"\n\n📅 Horarios libres el {fecha}: {', '.join(libres)}."
+        else:
+            disp = f"\n\n📅 El {fecha} no hay horarios libres (día lleno o no laborable)."
+        out = CAL_RE_CONSULTAR.sub("", out).strip()
+        out = (out + disp).strip() if out else disp.strip()
+
+    # AGENDAR: ejecutar y confirmar.
+    m_ag = CAL_RE_AGENDAR.search(out)
+    if m_ag:
+        fecha = m_ag.group(1)
+        hora = m_ag.group(2)
+        nombre = m_ag.group(3).strip()
+        motivo = m_ag.group(4).strip()
+        try:
+            ok = agendar_cita(fecha, hora, nombre, OWNER_PHONE or "", motivo)
+        except Exception:
+            log.exception("[ADMIN][CAL] Error agendando cita")
+            ok = False
+        if ok:
+            confirmacion = (f"\n\n✅ Cita agendada en Google Calendar: "
+                            f"{nombre} — {fecha} a las {hora} ({motivo}).")
+        else:
+            confirmacion = (f"\n\n❌ No pude agendar en Google Calendar "
+                            f"({fecha} {hora}). Revisa que las credenciales "
+                            f"de Google estén activas.")
+        out = CAL_RE_AGENDAR.sub("", out).strip()
+        out = (out + confirmacion).strip() if out else confirmacion.strip()
+
+    return out
+
+
 def procesar_mensaje_admin(texto_usuario: str, to_number: str,
                            imagen=None) -> None:
     """Eduardo escribió desde OWNER_PHONE. Modo asistente ejecutivo.
@@ -1563,12 +1643,21 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         generation_config=GENERATION_CONFIG,
     )
 
+    # Fecha de hoy en zona horaria de Mérida — la usa el modelo para
+    # interpretar fechas relativas en pedidos de agenda ("agéndame mañana").
+    try:
+        from zoneinfo import ZoneInfo
+        fecha_hoy = datetime.now(ZoneInfo(CAL_TIMEZONE)).strftime("%Y-%m-%d")
+    except Exception:
+        fecha_hoy = datetime.utcnow().strftime("%Y-%m-%d")
+
     if imagen is not None:
         pregunta = texto_usuario or (
             "Eduardo te mandó esta imagen sin texto. Descríbela brevemente "
             "y dile si hay algo específico que quiere que hagas con ella."
         )
         prompt_text = (
+            f"FECHA DE HOY: {fecha_hoy}\n\n"
             f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\n"
             f"EDUARDO MANDÓ UNA IMAGEN. "
             f"Interpreta qué muestra y responde a lo que pide.\n\n"
@@ -1576,11 +1665,16 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         )
         resp = modelo.generate_content([prompt_text, imagen])
     else:
-        mensaje = f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\nPREGUNTA DE EDUARDO:\n{texto_usuario}"
+        mensaje = (
+            f"FECHA DE HOY: {fecha_hoy}\n\n"
+            f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\n"
+            f"PREGUNTA DE EDUARDO:\n{texto_usuario}"
+        )
         resp = modelo.generate_content(mensaje)
     respuesta = (resp.text or "").strip()
 
     respuesta, numeros_ver = _ejecutar_comandos_admin(respuesta)
+    respuesta = _procesar_calendar_admin(respuesta)
 
     # Segundo pase si pidió ver alguna conversación completa
     if numeros_ver:
@@ -1589,12 +1683,14 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
             bloques.append(f"--- CONVERSACIÓN {num} ---\n{_conv_completa(num)}")
         extra = "\n\n".join(bloques)
         segundo = modelo.generate_content(
+            f"FECHA DE HOY: {fecha_hoy}\n\n"
             f"CONTEXTO ACTUAL:\n{contexto}\n\n"
             f"CONVERSACIONES COMPLETAS SOLICITADAS:\n{extra}\n\n"
             f"PREGUNTA ORIGINAL:\n{texto_usuario}"
         )
         respuesta = (segundo.text or "").strip()
         respuesta, _ = _ejecutar_comandos_admin(respuesta)
+        respuesta = _procesar_calendar_admin(respuesta)
 
     if not respuesta:
         respuesta = "(sin respuesta del asistente)"
