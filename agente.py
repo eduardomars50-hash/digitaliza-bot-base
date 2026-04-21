@@ -229,6 +229,32 @@ NATURALIDAD (IMPORTANTE):
 - Evita frases rígidas tipo "Con gusto te explico", "Claro que sí", "Permíteme".
   Habla suelto: "Va", "Órale", "Sí, claro", "Perfecto", "Listo".
 
+═══════════════════════════════════════════════
+PACIENCIA Y PIVOTEO (TURNOS AGRUPADOS)
+═══════════════════════════════════════════════
+
+Recibes turnos con uno o varios mensajes agrupados (el sistema los
+junta cuando el prospecto escribe varios seguidos). Reglas:
+
+1. Si recibes múltiples saludos juntos ("hola", "hola", "buenas"),
+   es UNA sola intención de saludar. Responde una sola vez con un
+   saludo único. No respondas tres saludos.
+
+2. Si dentro del mismo turno el prospecto se contradice o cambia de
+   idea ("quiero agendar" → "no mejor mándame info" → "espera, sí
+   agenda"), la ÚLTIMA intención es la que cuenta. No respondas a
+   las tres, responde a la última.
+
+3. Si el prospecto escribe varios mensajes que se complementan
+   ("tengo un consultorio" → "en Mérida" → "de dos doctores"),
+   procésalos como un solo contexto. No respondas uno por uno.
+
+4. Nunca le digas al prospecto "mandaste varios mensajes" ni lo hagas
+   sentir que escribió de más. Solo responde natural.
+
+5. Nunca tengas prisa. El sistema ya esperó a que el prospecto
+   terminara de escribir antes de pasarte el turno. Confía en eso.
+
 PÚBLICO:
 - Dueños de negocios locales (salones, barberías, consultorios médicos y dentales,
   veterinarias, restaurantes, spas) evaluando automatizar atención con IA.
@@ -1577,10 +1603,92 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
 
 
 # ─────────────────────────────────────────────────────────────
+# Buffer de mensajes entrantes (debouncing por número)
+# ─────────────────────────────────────────────────────────────
+# YCloud entrega cada mensaje como un webhook separado. Si el prospecto
+# manda varios mensajes en ráfaga ("hola", "hola", "buenas"), sin buffer
+# el bot responde cada uno por separado generando saludos duplicados o
+# respuestas contradictorias. Este buffer agrupa mensajes de TEXTO del
+# mismo número que llegan en una ventana corta y los procesa como un
+# solo turno. La regla del prompt "Paciencia y pivoteo" depende de esto.
+#
+# Disparadores de flush (lo que pase primero):
+#   - BUFFER_WAIT_SECS sin nuevos mensajes (timer se resetea en cada msg)
+#   - BUFFER_MAX_SECS desde el primer mensaje del grupo (techo absoluto)
+#   - BUFFER_MAX_MSGS mensajes acumulados (cap por seguridad)
+
+BUFFER_WAIT_SECS = 6.0
+BUFFER_MAX_SECS = 25.0
+BUFFER_MAX_MSGS = 6
+
+_TEXT_BUFFER: dict[str, dict] = {}
+_BUFFER_LOCK = Lock()
+
+
+def _enqueue_text_msg(phone_key: str, msg: dict) -> None:
+    """Encola un mensaje de texto y programa el flush. Si se alcanza el
+    cap de mensajes o de tiempo, dispara el flush de inmediato."""
+    flush_now = False
+    msgs_to_flush: list[dict] = []
+    with _BUFFER_LOCK:
+        slot = _TEXT_BUFFER.get(phone_key)
+        now = time.monotonic()
+        if slot is None:
+            slot = {"msgs": [], "first_ts": now, "timer": None}
+            _TEXT_BUFFER[phone_key] = slot
+        slot["msgs"].append(msg)
+        if slot["timer"] is not None:
+            slot["timer"].cancel()
+            slot["timer"] = None
+        too_many = len(slot["msgs"]) >= BUFFER_MAX_MSGS
+        too_old = (now - slot["first_ts"]) >= BUFFER_MAX_SECS
+        if too_many or too_old:
+            flush_now = True
+            msgs_to_flush = slot["msgs"]
+            del _TEXT_BUFFER[phone_key]
+        else:
+            t = threading.Timer(BUFFER_WAIT_SECS, _flush_text_buffer,
+                                args=(phone_key,))
+            t.daemon = True
+            slot["timer"] = t
+            t.start()
+    if flush_now:
+        _process_text_group(msgs_to_flush)
+
+
+def _flush_text_buffer(phone_key: str) -> None:
+    with _BUFFER_LOCK:
+        slot = _TEXT_BUFFER.pop(phone_key, None)
+    if slot:
+        _process_text_group(slot["msgs"])
+
+
+def _process_text_group(msgs: list[dict]) -> None:
+    """Combina los textos en un mensaje sintético y lo procesa como un
+    solo turno con _bypass_buffer=True."""
+    if not msgs:
+        return
+    bodies = [(m.get("text") or {}).get("body", "").strip() for m in msgs]
+    bodies = [b for b in bodies if b]
+    if not bodies:
+        return
+    combined = "\n".join(bodies)
+    base = msgs[0]
+    synthetic = dict(base)
+    synthetic["text"] = {"body": combined}
+    log.info("[BUFFER] Flush de %d msgs para %s, %d chars combinados",
+             len(bodies), base.get("from", "?"), len(combined))
+    try:
+        procesar_mensaje_ycloud(synthetic, _bypass_buffer=True)
+    except Exception:
+        log.exception("Error procesando grupo de mensajes")
+
+
+# ─────────────────────────────────────────────────────────────
 # Procesamiento de un mensaje entrante YCloud
 # ─────────────────────────────────────────────────────────────
 
-def procesar_mensaje_ycloud(msg: dict) -> None:
+def procesar_mensaje_ycloud(msg: dict, _bypass_buffer: bool = False) -> None:
     """
     Estructura de YCloud (evento whatsapp.inbound_message.received):
     {
@@ -1690,10 +1798,23 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             return
 
         # ─── RATE LIMITING ─── (no aplica al dueño, ya retornó arriba)
-        if not _check_rate_limit(normalizar_numero(from_number)):
-            log.warning("[RATE_LIMIT] %s excedió %d msgs/%ds; ignorado",
-                        from_number, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
-            return
+        # Bypass cuando venimos del flush del buffer: los mensajes originales
+        # ya pasaron rate_limit individualmente al llegar.
+        if not _bypass_buffer:
+            if not _check_rate_limit(normalizar_numero(from_number)):
+                log.warning("[RATE_LIMIT] %s excedió %d msgs/%ds; ignorado",
+                            from_number, RATE_LIMIT_MAX, RATE_LIMIT_WINDOW)
+                return
+
+        # ─── BUFFER DE TEXTO (debouncing) ───
+        # Los mensajes de TEXTO del cliente se agrupan: encolamos y dejamos
+        # que el timer los procese juntos. _bypass_buffer=True cuando ya
+        # estamos en el flush del grupo combinado.
+        if tipo == "text" and not _bypass_buffer:
+            cuerpo_check = (msg.get("text") or {}).get("body", "").strip()
+            if cuerpo_check:
+                _enqueue_text_msg(normalizar_numero(from_number), msg)
+                return
 
         entrada_usuario = None
         texto_guardar = ""
