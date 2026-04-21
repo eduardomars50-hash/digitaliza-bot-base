@@ -1579,6 +1579,25 @@ mandártelo; NO los muestres, NO los menciones al usuario final).
       úsalo. Solo si el sistema te avisa de un error de Calendar
       (mensaje "[SISTEMA: error Calendar...]"), reportárselo a Eduardo.
 
+5. PAUSAR al bot para un cliente específico (handover humano). Cuando
+   Eduardo diga "no le contestes a X", "pausa a X", "yo sigo con X",
+   "cállate con X", "déjame escribirle yo a X", emítelo:
+     [CMD_PAUSAR: +52XXXXXXXXXX]           ← 30 min por defecto
+     [CMD_PAUSAR: +52XXXXXXXXXX | 60]      ← o Eduardo especifica los min
+   - Mientras está pausado, si el cliente escribe, el bot GUARDA el
+     mensaje pero NO responde. Eduardo tiene la conversación.
+   - Pasado el tiempo, el bot retoma solo.
+   - Si Eduardo no dice cuántos minutos, usa 30. Si dice "un rato" → 30.
+     Si dice "una hora" → 60. Si dice "todo el día" → 480.
+
+6. DESPAUSAR (cuando Eduardo te diga "retoma con X", "bot sigue con X",
+   "que el bot conteste a X de nuevo", "yo ya salí del chat con X"):
+     [CMD_DESPAUSAR: +52XXXXXXXXXX]
+
+7. LISTAR PAUSADOS (cuando Eduardo pregunte "a quién tengo pausado",
+   "qué chats estoy llevando yo", "quién está en silencio"):
+     [CMD_LISTAR_PAUSADOS]
+
 COMANDOS NATURALES (sin tag, tú mismo los atiendes con el contexto):
 - "resumen" / "leads" / "quién me ha escrito" → resume todos los prospectos del
   inventario que ya tienes.
@@ -1599,6 +1618,111 @@ IMPORTANTE — VENTANA DE 24H DE WHATSAPP:
   aprobada (pendiente de implementar — solo avísale que ese es el
   próximo paso).
 """
+
+# Handover humano↔bot: Eduardo puede pausar al bot para un cliente específico
+# mientras él atiende esa conversación manualmente. Pasado el TTL, el bot retoma.
+# Persistencia en config.json bajo la key "paused_chats".
+PAUSA_DEFAULT_MIN = 30
+PAUSA_MAX_MIN = 24 * 60  # cap 24h por seguridad
+
+CMD_PAUSAR_RE = re.compile(
+    r"\[CMD_PAUSAR:\s*(\+?\d+)(?:\s*\|\s*(\d+))?\s*\]", re.IGNORECASE
+)
+CMD_DESPAUSAR_RE = re.compile(r"\[CMD_DESPAUSAR:\s*(\+?\d+)\s*\]", re.IGNORECASE)
+CMD_LISTAR_PAUSADOS_RE = re.compile(r"\[CMD_LISTAR_PAUSADOS\]", re.IGNORECASE)
+
+_PAUSE_LOCK = Lock()
+
+
+def _pausar_chat(phone: str, minutos: int = PAUSA_DEFAULT_MIN,
+                 source: str = "admin_cmd") -> datetime:
+    phone_norm = normalizar_numero(phone)
+    minutos = max(1, min(int(minutos), PAUSA_MAX_MIN))
+    expires = datetime.utcnow() + timedelta(minutes=minutos)
+    with _PAUSE_LOCK:
+        cfg = _load_config()
+        paused = cfg.setdefault("paused_chats", {})
+        paused[phone_norm] = {
+            "since": datetime.utcnow().isoformat() + "Z",
+            "expires": expires.isoformat() + "Z",
+            "source": source,
+        }
+        _save_config(cfg)
+    log.info("[PAUSA] %s pausado %d min (source=%s)", phone_norm, minutos, source)
+    return expires
+
+
+def _despausar_chat(phone: str) -> bool:
+    phone_norm = normalizar_numero(phone)
+    with _PAUSE_LOCK:
+        cfg = _load_config()
+        paused = cfg.get("paused_chats", {})
+        existed = phone_norm in paused
+        if existed:
+            paused.pop(phone_norm, None)
+            cfg["paused_chats"] = paused
+            _save_config(cfg)
+    if existed:
+        log.info("[PAUSA] %s despausado manualmente", phone_norm)
+    return existed
+
+
+def _esta_pausado(phone: str) -> bool:
+    """True si el chat está pausado y no expiró. Auto-limpia entradas viejas."""
+    phone_norm = normalizar_numero(phone)
+    ahora = datetime.utcnow()
+    with _PAUSE_LOCK:
+        cfg = _load_config()
+        paused = cfg.get("paused_chats", {})
+        entry = paused.get(phone_norm)
+        if not entry:
+            return False
+        try:
+            expires = datetime.fromisoformat(entry["expires"].rstrip("Z"))
+        except Exception:
+            paused.pop(phone_norm, None)
+            cfg["paused_chats"] = paused
+            _save_config(cfg)
+            return False
+        if ahora >= expires:
+            paused.pop(phone_norm, None)
+            cfg["paused_chats"] = paused
+            _save_config(cfg)
+            log.info("[PAUSA] %s expiró, bot retoma", phone_norm)
+            return False
+    return True
+
+
+def _listar_pausados() -> list[dict]:
+    """Devuelve lista de chats pausados vigentes (limpia expirados en el camino)."""
+    ahora = datetime.utcnow()
+    vivos: list[dict] = []
+    with _PAUSE_LOCK:
+        cfg = _load_config()
+        paused = cfg.get("paused_chats", {})
+        cambio = False
+        for phone, entry in list(paused.items()):
+            try:
+                expires = datetime.fromisoformat(entry["expires"].rstrip("Z"))
+            except Exception:
+                paused.pop(phone, None)
+                cambio = True
+                continue
+            if ahora >= expires:
+                paused.pop(phone, None)
+                cambio = True
+                continue
+            restante_min = int((expires - ahora).total_seconds() // 60)
+            vivos.append({
+                "phone": phone,
+                "expires_in_min": restante_min,
+                "source": entry.get("source", "?"),
+            })
+        if cambio:
+            cfg["paused_chats"] = paused
+            _save_config(cfg)
+    return vivos
+
 
 CMD_BORRAR_RE = re.compile(r"\[CMD_BORRAR:\s*(\+?\d+)\s*\]", re.IGNORECASE)
 CMD_VER_RE = re.compile(r"\[CMD_VER:\s*(\+?\d+)\s*\]", re.IGNORECASE)
@@ -1808,6 +1932,57 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
     for m in CMD_VER_RE.finditer(texto):
         ver.append(m.group(1).strip())
     texto = CMD_VER_RE.sub("", texto)
+
+    def _pausar(m):
+        phone_raw = m.group(1).strip()
+        minutos_raw = m.group(2)
+        try:
+            minutos = int(minutos_raw) if minutos_raw else PAUSA_DEFAULT_MIN
+        except Exception:
+            minutos = PAUSA_DEFAULT_MIN
+        phone_norm = normalizar_numero(phone_raw)
+        phone_e164 = "+" + phone_norm
+        try:
+            expires = _pausar_chat(phone_norm, minutos, source="admin_cmd")
+        except Exception as e:
+            notas.append(f"❌ No pude pausar a {phone_e164}: {e}")
+            return ""
+        notas.append(
+            f"🔇 Listo, ya no le contesto a {phone_e164} por {minutos} min. "
+            f"Tú llevas esa conversación. Yo retomo automáticamente al terminar el tiempo."
+        )
+        return ""
+
+    texto = CMD_PAUSAR_RE.sub(_pausar, texto)
+
+    def _despausar(m):
+        phone_raw = m.group(1).strip()
+        phone_norm = normalizar_numero(phone_raw)
+        phone_e164 = "+" + phone_norm
+        existed = _despausar_chat(phone_norm)
+        if existed:
+            notas.append(f"🔊 Ya retomo la conversación con {phone_e164}.")
+        else:
+            notas.append(f"ℹ️ {phone_e164} no estaba pausado.")
+        return ""
+
+    texto = CMD_DESPAUSAR_RE.sub(_despausar, texto)
+
+    def _listar_paus(_m):
+        vivos = _listar_pausados()
+        if not vivos:
+            notas.append("ℹ️ No hay chats pausados ahora mismo.")
+            return ""
+        lineas = ["🔇 Pausados ahora:"]
+        for v in vivos:
+            lineas.append(
+                f"  · +{v['phone']} — retomo en {v['expires_in_min']} min "
+                f"({v['source']})"
+            )
+        notas.append("\n".join(lineas))
+        return ""
+
+    texto = CMD_LISTAR_PAUSADOS_RE.sub(_listar_paus, texto)
 
     if notas:
         texto = (texto.strip() + "\n\n" + "\n".join(notas)).strip()
@@ -2267,6 +2442,40 @@ def _process_message_group(msgs: list[dict]) -> None:
     log.info("[BUFFER] Flush de %d msgs para %s -> %s (tipos: %s)",
              len(msgs), from_number, to_number,
              ",".join(m.get("type", "?") for m in msgs))
+
+    # Handover humano: si Eduardo pausó este chat, solo guardamos el
+    # mensaje en el historial y salimos sin llamar a Gemini. El cliente
+    # percibe "silencio del bot" — porque Eduardo está atendiendo él.
+    if _esta_pausado(from_number):
+        from_norm = normalizar_numero(from_number)
+        partes_texto: list[str] = []
+        for m in msgs:
+            tipo = m.get("type", "")
+            if tipo == "text":
+                cuerpo = (m.get("text") or {}).get("body", "").strip()
+                if cuerpo:
+                    partes_texto.append(cuerpo)
+            elif tipo in ("audio", "voice"):
+                partes_texto.append("[Audio recibido — bot pausado, no respondido]")
+            elif tipo == "image":
+                cap = ((m.get("image") or {}).get("caption") or "").strip()
+                partes_texto.append(
+                    f"[Imagen — bot pausado] {cap}" if cap else "[Imagen — bot pausado]"
+                )
+            elif tipo == "document":
+                partes_texto.append("[Documento — bot pausado, no respondido]")
+            elif tipo == "sticker":
+                partes_texto.append("[Sticker — bot pausado]")
+        if partes_texto:
+            try:
+                guardar_mensaje(from_norm, "user", "\n".join(partes_texto))
+            except Exception:
+                log.exception("[PAUSA] Error guardando mensaje durante pausa")
+        log.info(
+            "[PAUSA] Bot silenciado para %s — %d msgs guardados sin responder",
+            from_norm, len(msgs),
+        )
+        return
 
     try:
         if not _check_rate_limit(normalizar_numero(from_number)):
