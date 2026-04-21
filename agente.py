@@ -1773,6 +1773,37 @@ _BUFFER_LOCK = Lock()
 _slot_seq = itertools.count()
 
 
+# ─────────────────────────────────────────────────────────────
+# Dedup de webhooks (anti re-entregas de YCloud)
+# ─────────────────────────────────────────────────────────────
+# YCloud puede reenviar el mismo mensaje (timeouts, reintentos del
+# webhook, falla de red entre Meta y YCloud). Sin dedup, el bot procesa
+# el mismo mensaje varias veces y manda varias respuestas idénticas.
+# Mantenemos un LRU OrderedDict de wamids ya procesados (cap 5000) con
+# lock, suficiente para horas de tráfico antes de evict. Si el wamid
+# entra dos veces, ignoramos la segunda.
+
+DEDUP_MAX_WAMIDS = 5000
+_PROCESSED_WAMIDS: "OrderedDict[str, None]" = OrderedDict()
+_DEDUP_LOCK = Lock()
+
+
+def _wamid_visto(wamid: str) -> bool:
+    """True si el wamid ya fue procesado en esta vida del proceso. Si
+    es nuevo, lo marca y devuelve False. Si llega vacío, devuelve False
+    (no podemos dedupear, dejamos pasar)."""
+    if not wamid:
+        return False
+    with _DEDUP_LOCK:
+        if wamid in _PROCESSED_WAMIDS:
+            _PROCESSED_WAMIDS.move_to_end(wamid)  # marcar como reciente
+            return True
+        _PROCESSED_WAMIDS[wamid] = None
+        if len(_PROCESSED_WAMIDS) > DEDUP_MAX_WAMIDS:
+            _PROCESSED_WAMIDS.popitem(last=False)  # evict el más viejo
+        return False
+
+
 def _enqueue_msg(phone_key: str, msg: dict) -> None:
     """Encola un mensaje (cualquier tipo) y programa el flush. Si se
     alcanza el cap de mensajes o de tiempo, dispara el flush de
@@ -2018,6 +2049,16 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             return
 
         log.info("[IN  %s -> %s] type=%s", from_number, to_number, tipo)
+
+        # ─── DEDUP DE WEBHOOKS ───
+        # YCloud puede reentregar el mismo mensaje. Si ya lo procesamos,
+        # lo ignoramos antes de hacer cualquier trabajo (Gemini, descarga
+        # de media, encolado al buffer, etc.).
+        wamid = msg.get("wamid") or msg.get("id") or ""
+        if _wamid_visto(wamid):
+            log.info("[DEDUP] wamid %s ya procesado, ignorando re-entrega",
+                     wamid)
+            return
 
         # Modo admin: el dueño escribe al bot desde OWNER_PHONE. Va al
         # asistente ejecutivo y NO pasa por el buffer (Eduardo necesita
