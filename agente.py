@@ -10,6 +10,7 @@ import io
 import re
 import json
 import time
+import uuid
 import html as htmlmod
 import traceback
 import logging
@@ -846,11 +847,17 @@ def ycloud_enviar_texto(from_number: str, to_number: str,
     any_ok = False
     first_error = ""
     for i, parte in enumerate(partes):
+        # externalId único por envío: el webhook outbound de YCloud lo refleja
+        # y nos permite distinguir entre mensajes enviados por el bot (API) y
+        # los que Eduardo mande desde la app nativa en modo coexistencia.
+        ext_id = f"{_BOT_SENT_PREFIX}{uuid.uuid4().hex[:20]}"
+        _marcar_id_de_bot(ext_id)
         payload = {
             "from": from_number,
             "to": to_number,
             "type": "text",
             "text": {"body": parte},
+            "externalId": ext_id,
         }
         try:
             r = requests.post(
@@ -871,6 +878,18 @@ def ycloud_enviar_texto(from_number: str, to_number: str,
                     first_error = f"HTTP {r.status_code}: {snippet}"
             else:
                 any_ok = True
+                # YCloud asigna su propio id; registrarlo también para que los
+                # webhooks outbound que usen ese id en vez de externalId no
+                # disparen falso takeover.
+                try:
+                    resp_json = r.json() if r.content else {}
+                    if isinstance(resp_json, dict):
+                        for k in ("id", "wamid", "messageId"):
+                            v = resp_json.get(k)
+                            if isinstance(v, str) and v:
+                                _marcar_id_de_bot(v)
+                except Exception:
+                    pass
         except Exception as e:
             log.exception("Error enviando mensaje a %s", to_number)
             if not first_error:
@@ -1722,6 +1741,43 @@ def _listar_pausados() -> list[dict]:
             cfg["paused_chats"] = paused
             _save_config(cfg)
     return vivos
+
+
+# Tracking de mensajes salientes enviados por el bot vía API. YCloud en modo
+# coexistencia emite webhooks outbound para AMBOS: mensajes de la API y
+# mensajes que Eduardo manda desde la app nativa de WhatsApp Business.
+# Si detectamos un outbound que NO está registrado aquí, asumimos takeover
+# manual y pausamos ese chat automáticamente.
+_BOT_SENT_PREFIX = "digitaliza_bot_"
+_BOT_SENT_TTL_SEC = 3600  # 1 hora es más que suficiente para ciclo webhook
+_BOT_SENT_LOCK = Lock()
+_BOT_SENT_IDS: "OrderedDict[str, float]" = OrderedDict()
+
+
+def _marcar_id_de_bot(id_str: str) -> None:
+    """Registra un externalId o wamid como enviado por el bot."""
+    if not id_str:
+        return
+    ahora = time.time()
+    cutoff = ahora - _BOT_SENT_TTL_SEC
+    with _BOT_SENT_LOCK:
+        _BOT_SENT_IDS[id_str] = ahora
+        # GC: pop los más viejos
+        while _BOT_SENT_IDS:
+            k, ts = next(iter(_BOT_SENT_IDS.items()))
+            if ts < cutoff:
+                _BOT_SENT_IDS.popitem(last=False)
+            else:
+                break
+
+
+def _es_id_de_bot(id_str: str) -> bool:
+    if not id_str:
+        return False
+    if id_str.startswith(_BOT_SENT_PREFIX):
+        return True
+    with _BOT_SENT_LOCK:
+        return id_str in _BOT_SENT_IDS
 
 
 CMD_BORRAR_RE = re.compile(r"\[CMD_BORRAR:\s*(\+?\d+)\s*\]", re.IGNORECASE)
@@ -3018,6 +3074,68 @@ def webhook_verify():
     return challenge or "ok", 200
 
 
+def _auto_pausar_por_takeover(client_phone: str) -> None:
+    """Eduardo respondió al cliente desde la app nativa (coexistencia YCloud).
+    Pausa el bot para ese chat y le avisa a Eduardo solo la primera vez."""
+    cliente_norm = normalizar_numero(client_phone)
+    if not cliente_norm:
+        return
+    # Si ya está pausado, extender TTL pero NO renotificar (evita spam si
+    # manda varios mensajes seguidos).
+    ya_pausado = _esta_pausado(cliente_norm)
+    _pausar_chat(cliente_norm, minutos=PAUSA_DEFAULT_MIN, source="manual_outbound")
+    if ya_pausado:
+        log.info("[TAKEOVER] %s ya estaba pausado; extendido TTL", cliente_norm)
+        return
+    log.info("[TAKEOVER] Auto-pausa detectada para %s (Eduardo respondió manual)",
+             cliente_norm)
+    try:
+        _notificar_owner(
+            f"🟡 Detecté que le escribiste a +{cliente_norm} desde tu celular. "
+            f"Pauso el bot con él por {PAUSA_DEFAULT_MIN} min para no escribirle al "
+            f"mismo tiempo. Si vas a seguir más tiempo, dime "
+            f"\"pausa a +{cliente_norm} por 60\" (o los minutos que quieras). "
+            f"El bot retoma solo cuando termine la pausa."
+        )
+    except Exception:
+        log.exception("[TAKEOVER] Error notificando al dueño")
+
+
+def _procesar_outbound_event(ev: dict) -> None:
+    """Webhook de mensaje SALIENTE (desde el número del bot hacia cliente).
+    En modo coexistencia, YCloud emite esto para mensajes que Eduardo
+    envía desde la app nativa — los detectamos por ausencia del prefijo/id
+    que registramos al enviar vía API, y auto-pausamos el chat."""
+    msg = (ev.get("whatsappOutboundMessage") or ev.get("whatsappMessage")
+           or ev.get("message") or ev.get("data") or ev)
+    if not isinstance(msg, dict):
+        return
+
+    from_number = msg.get("from") or ""
+    to_number = msg.get("to") or ""
+    ext_id = msg.get("externalId") or ""
+    wamid = (msg.get("id") or msg.get("wamid") or msg.get("messageId") or "")
+
+    # Sólo nos interesan outbounds FROM nuestro número de Digitaliza
+    if BOT_PHONE and normalizar_numero(from_number) != normalizar_numero(BOT_PHONE):
+        return
+    if not to_number:
+        return
+
+    # ¿Este mensaje lo enviamos nosotros (bot vía API)?
+    if _es_id_de_bot(ext_id) or _es_id_de_bot(wamid):
+        return  # es del bot, ignorar
+
+    # Señales explícitas de origen API (si YCloud las incluye)
+    origen = str(msg.get("source") or msg.get("origin") or msg.get("sentBy")
+                 or "").lower()
+    if origen in ("api", "bot", "application", "cloud_api"):
+        return
+
+    # Si llegamos aquí: outbound que NO originó el bot → takeover manual
+    _auto_pausar_por_takeover(to_number)
+
+
 def _procesar_eventos_webhook(eventos: list) -> None:
     """Procesa eventos en thread separado para no bloquear el ACK a YCloud."""
     for ev in eventos:
@@ -3030,6 +3148,14 @@ def _procesar_eventos_webhook(eventos: list) -> None:
                 msg = ev.get("whatsappInboundMessage") or ev.get("message") or ev.get("data") or {}
                 if msg:
                     procesar_mensaje_ycloud(msg)
+            # Outbound message — coexistencia YCloud. Si no lo envió el bot,
+            # asumimos takeover manual desde la app nativa y pausamos.
+            elif tipo_ev in ("whatsapp.outbound_message.accepted",
+                             "whatsapp.outbound_message.sent",
+                             "whatsapp.outbound_message.created",
+                             "whatsapp:outbound_message.accepted",
+                             "whatsapp:outbound_message.sent"):
+                _procesar_outbound_event(ev)
             elif "from" in ev and "type" in ev:
                 # por si YCloud manda el mensaje sin envoltorio
                 procesar_mensaje_ycloud(ev)
