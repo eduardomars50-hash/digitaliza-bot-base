@@ -49,8 +49,8 @@ for d in (CONVERSACIONES_DIR, LEADS_DIR, PERFILES_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 MAX_HISTORIAL = 50
-CONTEXTO_DEFAULT = 5
-CONTEXTO_EXTENDIDO = 20
+CONTEXTO_DEFAULT = 12  # subimos de 5 a 12: más coherencia, bot deja de re-presentarse
+CONTEXTO_EXTENDIDO = 30
 MAX_CHARS_MENSAJE = 1500
 SENAL_MAS_CONTEXTO = "[NECESITO_MAS_CONTEXTO]"
 LEAD_TAG_RE = re.compile(r"\[LEAD_CAPTURADO:([^\]]+)\]", re.IGNORECASE)
@@ -204,14 +204,21 @@ IDENTIDAD:
 NATURALIDAD (IMPORTANTE):
 - Habla como una persona real del equipo contestando rápido desde su celular.
 
-- SALUDO — cuándo SÍ y cuándo NO:
-  · SALUDA solo si es el primer mensaje en el historial, o si la última
-    interacción se ve claramente como una conversación NUEVA (días sin
-    contacto, prospecto vuelve a abrir tema desde cero).
-  · NO saludes si ya hubo intercambio reciente, aunque el prospecto te
-    vuelva a escribir "Hola". Responde directo al contenido o pregunta
-    cómo le quedó pensar tu último mensaje.
+- SALUDO Y PRESENTACIÓN — cuándo SÍ y cuándo NO (REGLA CRÍTICA):
+  · PRESÉNTATE ("soy el asistente de Digitaliza") SOLO en tu PRIMER
+    mensaje de la conversación. Una sola vez en toda la historia del
+    chat. Si en el historial aparece cualquier mensaje tuyo anterior,
+    YA TE PRESENTASTE, no lo vuelvas a hacer.
+  · SALUDA ("Hola", "Qué onda", "Buenas") solo si es el primer mensaje
+    en el historial, o si la última interacción fue hace DÍAS. Si ya
+    hubo intercambio reciente y te vuelven a escribir "Hola", NO
+    devuelvas saludo, responde directo al contenido.
   · NUNCA mandes dos mensajes seguidos con el mismo saludo reformulado.
+  · Ejemplo de FALLA (NUNCA hagas esto):
+      T1 (tú): "Qué onda! Soy el asistente de Digitaliza. ¿En qué te ayudo?"
+      T2 (cliente): "tengo una barbería"
+      T3 (tú): "Mucho gusto, soy el asistente de Digitaliza..." ← MAL, ya te habías presentado
+    Correcto en T3: "Va, con barberías ayudamos mucho con la agenda. ¿Cuántos mensajes al día te llegan?"
 
 - NO REPITAS:
   · NUNCA repitas información que ya diste en mensajes anteriores.
@@ -912,7 +919,7 @@ def _extraer_texto_de_url(url: str) -> str | None:
                     "+https://somosdigitaliza.com)"
                 )
             },
-            timeout=10,
+            timeout=4,
             stream=True,
             allow_redirects=True,
         )
@@ -2107,8 +2114,8 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
 # dict in-memory + Lock + threading.Timer es suficiente. Si en el
 # futuro se escala a multi-worker, hay que migrar a Redis.
 
-BUFFER_WAIT_SECS = 10.0
-BUFFER_MAX_SECS = 20.0
+BUFFER_WAIT_SECS = 3.0
+BUFFER_MAX_SECS = 8.0
 BUFFER_MAX_MSGS = 6
 
 _MSG_BUFFER: dict[str, dict] = {}
