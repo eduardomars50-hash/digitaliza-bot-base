@@ -255,6 +255,22 @@ NATURALIDAD (IMPORTANTE):
       T3 (tú): "Mucho gusto, soy el asistente de Digitaliza..." ← MAL, ya te habías presentado
     Correcto en T3: "Va, con barberías ayudamos mucho con la agenda. ¿Cuántos mensajes al día te llegan?"
 
+- TIP DE ESTILO EN EL PRIMER MENSAJE (OBLIGATORIO SOLO EN EL PRIMER TURNO):
+  · En tu PRIMER mensaje de toda la conversación, DESPUÉS del saludo +
+    presentación y de tu primera pregunta, agrega un párrafo corto y suave
+    sugiriéndole al prospecto que mande sus ideas juntas en un mismo
+    mensaje para que la plática fluya mejor. Redáctalo como recomendación
+    amable, NUNCA como orden o regla.
+  · Varía la redacción (no copies literal el ejemplo), pero el fondo
+    siempre es el mismo: "ideas juntas en un párrafo > mensajes sueltos".
+  · Ejemplo de referencia (no lo pegues tal cual, varíalo):
+      "Ah, y un tip para que fluya mejor la plática: si puedes
+       mandarme tus ideas juntas en un mismo mensaje en vez de
+       varios sueltos, te entiendo a la primera y no se me pierde
+       nada 🙌 Sin presión, como te acomode."
+  · NUNCA repitas este tip en mensajes posteriores. Si el historial
+    ya tiene cualquier mensaje tuyo, NO lo vuelvas a emitir.
+
 - NO REPITAS:
   · NUNCA repitas información que ya diste en mensajes anteriores.
   · Si el prospecto YA te dijo su nombre, su tipo de negocio, su ciudad,
@@ -616,6 +632,28 @@ HORARIO DISPONIBLE PARA AGENDAR (regla dura):
 
 Si el prospecto pide un horario VÁLIDO ({agenda_dias_texto} {agenda_horario_texto}):
 
+REGLA ABSOLUTA — NUNCA INVENTES DISPONIBILIDAD:
+- Está PROHIBIDO decir "sí, está disponible", "perfecto, a esa hora te
+  agendo", "esa hora sí", o cualquier afirmación de disponibilidad ANTES
+  de haber emitido [CALENDARIO:CONSULTAR:YYYY-MM-DD] y recibido la
+  respuesta del sistema. Si afirmas disponibilidad sin consulta previa,
+  estás mintiendo y rompes la confianza del cliente.
+- Si el prospecto propone una hora específica sin haber tú consultado
+  ese día, tu ÚNICA respuesta válida es emitir la señal de consulta.
+  Primero consultas, después respondes.
+
+PARSEO DE HORA (un solo intento, no preguntes dos veces):
+- "las 3", "a las 3", "a las tres", "a la 3" → 15:00 (cae en el rango de tarde)
+- "3 pm", "3 de la tarde", "tres de la tarde" → 15:00
+- "10 am", "diez de la mañana", "10 de la mañana" → 10:00
+- "medio día", "mediodía", "las 12" (si rango incluye 12) → 12:00
+- "5 y media", "5:30" → 17:30 (redondea hacia abajo a la hora en punto del slot)
+- Si el cliente da hora ambigua AM/PM: asume la que caiga en el rango
+  configurado ({agenda_horario_texto}). Si caben ambas, pregunta UNA
+  sola vez de forma natural: "¿mañana o tarde?". No preguntes 3 veces.
+
+FLUJO:
+
 1. Pregunta qué día le conviene (hoy, mañana, fecha específica).
 2. Cuando tengas la fecha en formato YYYY-MM-DD, responde EXACTAMENTE con una
    línea sola con la señal:
@@ -625,16 +663,32 @@ Si el prospecto pide un horario VÁLIDO ({agenda_dias_texto} {agenda_horario_tex
 3. Cuando el sistema te devuelva los horarios disponibles, preséntalos de
    forma natural al prospecto y pregúntale cuál le acomoda (sin listas
    numeradas, sin bullets — estilo WhatsApp normal).
-4. Cuando el prospecto elija un horario, responde con DOS cosas:
+4. Cuando el prospecto elija un horario (y ESA hora esté en la lista
+   que el sistema te devolvió), responde con DOS cosas:
    a) Al inicio, una línea sola con el tag:
         [CALENDARIO:AGENDAR:2026-04-18:10:00:Juan Pérez:cotización bot]
       Formato: fecha:hora:nombre:motivo. El nombre NO debe tener ":".
       La hora va como HH:MM en 24h.
-   b) Debajo, la confirmación al prospecto estilo:
-        "Listo, quedó agendado para el 18 a las 10am. Te va a llegar la
-         confirmación en un ratito."
-5. Los tags [CALENDARIO:...] son INTERNOS, el cliente NO los ve. NO los
+   b) Debajo, la confirmación al prospecto como SOLICITUD PENDIENTE
+      (no como cita confirmada). Ejemplos válidos:
+        "Va, ya le pasé tu solicitud a Eduardo para el 18 a las 10am.
+         En cuanto él me confirme, te aviso por aquí 👍"
+        "Listo, dejé apartado el 18 a las 10am y le avisé a Eduardo.
+         En cuanto me dé el visto bueno, te confirmo."
+      NUNCA digas "quedó agendado", "ya está agendada", "cita confirmada".
+      SIEMPRE preséntalo como solicitud pendiente de confirmación humana.
+5. Si el prospecto elige una hora que NO está en la lista del sistema,
+   NO emitas [CALENDARIO:AGENDAR]. Dile que esa hora ya se ocupó y
+   ofrécele otra de la lista.
+6. Los tags [CALENDARIO:...] son INTERNOS, el cliente NO los ve. NO los
    menciones, NO los repitas.
+
+MANEJO DE RESPUESTA DEL SISTEMA TRAS AGENDAR:
+- Si el sistema te responde con "[SISTEMA: Esa hora ya se ocupó...]",
+  significa que entre tu CONSULTAR y tu AGENDAR el slot se tomó. NO
+  discutas con el sistema: discúlpate con el prospecto con naturalidad
+  ("Ups, parece que esa hora se me acaba de ocupar") y ofrécele otra de
+  las libres que el sistema te dé en ese mismo mensaje.
 
 CAPTURA DE LEAD (INTERNO — IMPORTANTE):
 - Cuando YA TENGAS los 3 datos del prospecto: su NOMBRE, el NOMBRE DE SU NEGOCIO y
@@ -1393,9 +1447,16 @@ def consultar_disponibilidad(fecha: str) -> list[str]:
 
 
 def agendar_cita(
-    fecha: str, hora: str, nombre: str, telefono: str, motivo: str
+    fecha: str, hora: str, nombre: str, telefono: str, motivo: str,
+    tentative: bool = True,
 ) -> bool:
-    """Crea un evento de 1 hora en el calendario. Devuelve True si se creó."""
+    """Crea un evento de 1 hora en el calendario. Devuelve True si se creó.
+
+    tentative=True (default, flujo prospecto): se crea como 'tentative' y con
+    prefijo [SOLICITUD] en el summary, para que Eduardo la apruebe o pivotee.
+    tentative=False (admin, cuando Eduardo agenda directo): se crea como
+    'confirmed' con el summary normal.
+    """
     try:
         from zoneinfo import ZoneInfo
     except Exception:
@@ -1412,14 +1473,29 @@ def agendar_cita(
     tz = ZoneInfo(CAL_TIMEZONE)
     inicio = datetime(y, m, d, hh, mm, tzinfo=tz)
     fin = inicio + timedelta(hours=1)
-    evento = {
-        "summary": f"Llamada Digitaliza — {nombre}",
-        "description": (
+    if tentative:
+        summary = f"[SOLICITUD] Llamada Digitaliza — {nombre}"
+        descripcion = (
             f"Prospecto: {nombre}\n"
             f"Teléfono: {telefono}\n"
             f"Motivo: {motivo}\n\n"
-            f"Agendada automáticamente por el bot."
-        ),
+            f"Solicitud creada automáticamente por el bot.\n"
+            f"Confírmala o pivotea antes de la hora."
+        )
+        status = "tentative"
+    else:
+        summary = f"Llamada Digitaliza — {nombre}"
+        descripcion = (
+            f"Prospecto: {nombre}\n"
+            f"Teléfono: {telefono}\n"
+            f"Motivo: {motivo}\n\n"
+            f"Agendada por Eduardo vía comando admin."
+        )
+        status = "confirmed"
+    evento = {
+        "summary": summary,
+        "description": descripcion,
+        "status": status,
         "start": {"dateTime": inicio.isoformat(), "timeZone": CAL_TIMEZONE},
         "end": {"dateTime": fin.isoformat(), "timeZone": CAL_TIMEZONE},
     }
@@ -2392,7 +2468,10 @@ def _procesar_calendar_admin(respuesta: str) -> str:
         nombre = m_ag.group(3).strip()
         motivo = m_ag.group(4).strip()
         try:
-            ok = agendar_cita(fecha, hora, nombre, OWNER_PHONE or "", motivo)
+            ok = agendar_cita(
+                fecha, hora, nombre, OWNER_PHONE or "", motivo,
+                tentative=False,
+            )
         except Exception:
             log.exception("[ADMIN][CAL] Error agendando cita")
             ok = False
@@ -3312,16 +3391,52 @@ def _run_llm_pipeline(from_number: str, to_number: str,
         hora_ag = m_ag.group(2)
         nombre_ag = m_ag.group(3).strip()
         motivo_ag = m_ag.group(4).strip()
-        ok = agendar_cita(fecha_ag, hora_ag, nombre_ag, from_number, motivo_ag)
-        if ok:
-            cita_agendada = {
-                "fecha": fecha_ag, "hora": hora_ag,
-                "nombre": nombre_ag, "motivo": motivo_ag,
-            }
+        # Normalizar hora a "HH:00" para comparar contra libres (slots de 1h).
+        try:
+            hh_ag, _mm_ag = hora_ag.split(":", 1)
+            hora_slot = f"{int(hh_ag):02d}:00"
+        except Exception:
+            hora_slot = hora_ag
+
+        libres_ahora = consultar_disponibilidad(fecha_ag)
+        if hora_slot not in libres_ahora:
+            # El modelo intentó agendar una hora ocupada (o que se ocupó
+            # entre el CONSULTAR y el AGENDAR). NO creamos el evento:
+            # devolvemos contexto a Gemini para que pivotee con naturalidad.
+            log.warning(
+                "[CAL] slot %s %s NO disponible al momento de agendar; "
+                "libres=%s", fecha_ag, hora_ag, libres_ahora,
+            )
+            respuesta_cruda = CAL_RE_AGENDAR.sub("", respuesta_cruda).strip()
+            if libres_ahora:
+                ctx_busy = (
+                    f"[SISTEMA: Esa hora ({hora_ag}) ya se ocupó o no está "
+                    f"disponible el {fecha_ag}. Discúlpate con naturalidad "
+                    f"(ej: 'ups, parece que esa hora se me acaba de ocupar') "
+                    f"y ofrécele estas horas libres: "
+                    f"{', '.join(libres_ahora)}. NO incluyas otra señal "
+                    f"[CALENDARIO:...] en esta respuesta.]"
+                )
+            else:
+                ctx_busy = (
+                    f"[SISTEMA: El {fecha_ag} ya no tiene horarios libres. "
+                    f"Discúlpate y ofrécele otro día cercano. NO incluyas "
+                    f"otra señal [CALENDARIO:...] en esta respuesta.]"
+                )
+            respuesta_cruda = preguntar_gemini(
+                from_number, ctx_busy, n_contexto=CONTEXTO_EXTENDIDO
+            )
         else:
-            log.warning("[CAL] agendar_cita falló: %s %s %s",
-                        fecha_ag, hora_ag, nombre_ag)
-        respuesta_cruda = CAL_RE_AGENDAR.sub("", respuesta_cruda).strip()
+            ok = agendar_cita(fecha_ag, hora_ag, nombre_ag, from_number, motivo_ag)
+            if ok:
+                cita_agendada = {
+                    "fecha": fecha_ag, "hora": hora_ag,
+                    "nombre": nombre_ag, "motivo": motivo_ag,
+                }
+            else:
+                log.warning("[CAL] agendar_cita falló: %s %s %s",
+                            fecha_ag, hora_ag, nombre_ag)
+            respuesta_cruda = CAL_RE_AGENDAR.sub("", respuesta_cruda).strip()
 
     respuesta, datos_lead = extraer_lead(respuesta_cruda)
     if datos_lead and not lead_ya_notificado(from_number):
@@ -3345,11 +3460,13 @@ def _run_llm_pipeline(from_number: str, to_number: str,
     if cita_agendada:
         try:
             _notificar_owner(
-                f"📅 Nueva cita agendada\n"
+                f"📅 SOLICITUD de cita — confirma o pivotea\n"
                 f"Nombre: {cita_agendada['nombre']}\n"
                 f"Número: {from_number}\n"
                 f"Fecha: {cita_agendada['fecha']} a las {cita_agendada['hora']}\n"
-                f"Motivo: {cita_agendada['motivo']}"
+                f"Motivo: {cita_agendada['motivo']}\n\n"
+                f"Calendar: marcada como tentativa. Cambia a confirmada "
+                f"cuando apruebes, o elimínala si hay que mover."
             )
         except Exception:
             log.exception("Error notificando cita al dueño")
