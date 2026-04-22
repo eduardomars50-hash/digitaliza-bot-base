@@ -129,8 +129,42 @@ def _check_rate_limit(phone: str) -> bool:
     return True
 
 
+SECURITY_LOG_MAX_EVENTS = 2000            # eventos activos en security_logs.json
+SECURITY_LOG_ROTATE_SIZE = 5 * 1024 * 1024  # 5 MB → se archiva
+SECURITY_LOG_ARCHIVES_MAX = 6             # máx archivos archivados (≈6 meses)
+
+
+def _rotar_security_log_si_toca() -> None:
+    """Si security_logs.json supera SECURITY_LOG_ROTATE_SIZE, lo renombra
+    con timestamp y empieza uno nuevo. También poda archivos viejos."""
+    try:
+        if not SECURITY_LOG_PATH.exists():
+            return
+        if SECURITY_LOG_PATH.stat().st_size < SECURITY_LOG_ROTATE_SIZE:
+            return
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%SZ")
+        archive = SECURITY_LOG_PATH.with_name(f"security_logs_{ts}.json")
+        SECURITY_LOG_PATH.rename(archive)
+        log.info("[SECURITY] Log rotado: %s (%.1f MB)",
+                 archive.name, archive.stat().st_size / 1024 / 1024)
+        # Poda: quedarse con los últimos SECURITY_LOG_ARCHIVES_MAX
+        archivos = sorted(SECURITY_LOG_PATH.parent.glob("security_logs_*.json"))
+        sobrantes = (archivos[:-SECURITY_LOG_ARCHIVES_MAX]
+                     if len(archivos) > SECURITY_LOG_ARCHIVES_MAX else [])
+        for s in sobrantes:
+            try:
+                s.unlink()
+                log.info("[SECURITY] Archivo viejo borrado: %s", s.name)
+            except Exception:
+                pass
+    except Exception:
+        log.exception("[SECURITY] Error rotando security log")
+
+
 def _log_security_event(phone: str, tipo: str, mensaje: str) -> None:
-    """Guarda intento de jailbreak o abuso en security_logs.json."""
+    """Guarda intento de jailbreak o abuso en security_logs.json.
+    Rota automáticamente si el archivo supera 5 MB y mantiene 2000 eventos
+    activos, con histórico de hasta 6 archivos archivados."""
     entry = {
         "ts": datetime.utcnow().isoformat() + "Z",
         "phone": phone,
@@ -139,12 +173,12 @@ def _log_security_event(phone: str, tipo: str, mensaje: str) -> None:
     }
     log.warning("[SECURITY] %s de %s: %s", tipo, phone, mensaje[:120])
     try:
+        _rotar_security_log_si_toca()
         datos = []
         if SECURITY_LOG_PATH.exists():
             datos = json.loads(SECURITY_LOG_PATH.read_text(encoding="utf-8"))
         datos.append(entry)
-        # Mantener últimos 500 eventos
-        datos = datos[-500:]
+        datos = datos[-SECURITY_LOG_MAX_EVENTS:]
         SECURITY_LOG_PATH.write_text(
             json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8"
         )
