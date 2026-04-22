@@ -679,6 +679,36 @@ DETECCIÓN DE INTENCIÓN DE COMPRA (INTERNO):
   Esta señal es interna, NO se muestra al cliente, no la menciones. Solo emítela UNA
   vez por conversación.
 
+FORMATO DE TAGS INTERNOS (LÉELO DOS VECES — ES CRÍTICO):
+
+Los tags [CALENDARIO:...], [LEAD_CAPTURADO:...], [EVENTO:...] son señales
+internas que el SERVIDOR lee con regex EXACTO. Si escribes el tag mal, el
+servidor NO lo detecta y el texto llega al cliente como "código". Esto
+ROMPE EL PRODUCTO — el cliente ve basura y pierde confianza al instante.
+
+REGLAS DE FORMATO (innegociables):
+- SIEMPRE corchetes cuadrados: [ ... ]. NUNCA paréntesis ( ), NUNCA llaves {{ }}.
+- SIEMPRE mayúsculas en el nombre del tag: CALENDARIO, LEAD_CAPTURADO, EVENTO.
+- SIEMPRE dos puntos ":" como separador interno, NUNCA espacios o "es igual a".
+- SIEMPRE en línea sola, sin nada más en esa línea.
+- Año SIEMPRE el actual (ver sección FECHA Y HORA ACTUAL más abajo).
+
+Ejemplos CORRECTOS (cópialos al pie de la letra, variando solo los valores):
+  [CALENDARIO:CONSULTAR:2026-04-23]
+  [CALENDARIO:AGENDAR:2026-04-23:15:00:Juan Pérez:cotización bot]
+  [LEAD_CAPTURADO: nombre=Juan Pérez; negocio=Barber Joe; ciudad=Mérida]
+  [EVENTO:QUIERE_CONTRATAR]
+
+Ejemplos PROHIBIDOS (rompen el producto — NUNCA los escribas):
+  calendario consulta 2024-05-24          ← sin corchetes, año inventado
+  [Calendario: Consulta 2026-04-23]       ← espacios y capitalización mala
+  (negocio es igual a X, ciudad es igual a Y)  ← paréntesis, "es igual a"
+  "nombre: Juan, negocio: Barbería"       ← narrativa en vez de tag
+
+Si no estás 100% seguro del formato exacto, NO EMITAS EL TAG. Mejor haz
+otra pregunta natural al cliente y espera a estar seguro. Un tag ausente
+es infinitamente mejor que un tag mal formado visible al cliente.
+
 CALENDARIO (INTERNO — IMPORTANTE):
 
 HORARIO DISPONIBLE PARA AGENDAR (regla dura):
@@ -982,14 +1012,44 @@ def build_system_prompt() -> str:
 SYSTEM_PROMPT_CACHED = build_system_prompt()
 
 
+def _contexto_fecha_actual() -> str:
+    """Bloque corto con la fecha de hoy y mañana, inyectado al system
+    instruction en cada turno. Evita que Gemini alucine años pasados
+    (ej. '2024' cuando estamos en 2026) al emitir tags de calendario."""
+    try:
+        from zoneinfo import ZoneInfo
+        ahora = datetime.now(ZoneInfo(CAL_TIMEZONE))
+    except Exception:
+        ahora = datetime.now()
+    hoy = ahora.strftime("%Y-%m-%d")
+    dia_semana = _WEEKDAY_TO_ES[ahora.weekday()]
+    mañana = (ahora + timedelta(days=1)).strftime("%Y-%m-%d")
+    return (
+        "\n\n═══════════════════════════════════════════════\n"
+        "FECHA Y HORA ACTUAL (CRÍTICO — úsala SIEMPRE)\n"
+        "═══════════════════════════════════════════════\n"
+        f"Hoy es {dia_semana}, {hoy}. Mañana es {mañana}. "
+        f"Hora actual en Mérida: {ahora.strftime('%H:%M')}.\n"
+        "Regla dura: TODA fecha que pongas en un tag "
+        "([CALENDARIO:CONSULTAR:YYYY-MM-DD], [CALENDARIO:AGENDAR:...]) "
+        "o en texto al cliente DEBE ser de este año. Si escribes un "
+        "año distinto, estás alucinando y rompes el producto. Cuando "
+        "el cliente diga 'hoy', usa exactamente " + hoy + ". Cuando "
+        "diga 'mañana', usa exactamente " + mañana + ".\n"
+    )
+
+
 # ─────────────────────────────────────────────────────────────
 # Gemini
 # ─────────────────────────────────────────────────────────────
 
 def _build_model() -> genai.GenerativeModel:
+    # Inyectamos la fecha actual en cada llamada para que Gemini tenga
+    # contexto temporal y no invente años del pasado.
+    system_instruction = SYSTEM_PROMPT_CACHED + _contexto_fecha_actual()
     return genai.GenerativeModel(
         model_name=GEMINI_MODEL_NAME,
-        system_instruction=SYSTEM_PROMPT_CACHED,
+        system_instruction=system_instruction,
         safety_settings=SAFETY_SETTINGS,
         generation_config=GENERATION_CONFIG,
     )
@@ -1574,6 +1634,7 @@ def agendar_cita(
 
 CONFIG_PATH = DATA_DIR / "config.json"
 EVENTO_CONTRATAR_RE = re.compile(r"\[EVENTO:QUIERE_CONTRATAR\]", re.IGNORECASE)
+EVENTO_WEB_RE = re.compile(r"\[EVENTO:QUIERE_WEB\]", re.IGNORECASE)
 SEGUIMIENTO_DIR = DATA_DIR / "seguimiento"
 SEGUIMIENTO_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1728,6 +1789,33 @@ def _extraer_evento_contratar(texto: str) -> tuple[str, bool]:
     """Quita [EVENTO:QUIERE_CONTRATAR] del texto. Devuelve (limpio, detectado)."""
     if EVENTO_CONTRATAR_RE.search(texto):
         return EVENTO_CONTRATAR_RE.sub("", texto).strip(), True
+    return texto, False
+
+
+def notificar_quiere_web(phone: str) -> None:
+    """Notifica cuando el prospecto muestra interés concreto en una
+    página web. El bot no cierra la venta de web: escala a Eduardo."""
+    seg_path = SEGUIMIENTO_DIR / f"{normalizar_numero(phone)}_quiere_web.flag"
+    if seg_path.exists():
+        return
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", phone)
+    tipo = perfil.get("tipo_negocio", "?")
+    _notificar_owner(
+        f"🌐 PROSPECTO INTERESADO EN PÁGINA WEB\n"
+        f"Nombre: {nombre}\n"
+        f"Negocio: {tipo}\n"
+        f"Número: {phone}\n"
+        f"El bot ya le pasó el rango general ($2k-$4k landing, $4k+ "
+        f"custom). Continúa tú la cotización a la medida."
+    )
+    seg_path.write_text(datetime.utcnow().isoformat() + "Z")
+
+
+def _extraer_evento_web(texto: str) -> tuple[str, bool]:
+    """Quita [EVENTO:QUIERE_WEB] del texto. Devuelve (limpio, detectado)."""
+    if EVENTO_WEB_RE.search(texto):
+        return EVENTO_WEB_RE.sub("", texto).strip(), True
     return texto, False
 
 
@@ -1916,6 +2004,159 @@ def extraer_lead(texto: str) -> tuple[str, dict | None]:
             datos[k.strip().lower()] = v.strip()
     limpio = LEAD_TAG_RE.sub("", texto).strip()
     return limpio, datos
+
+
+# ─────────────────────────────────────────────────────────────
+# Sanitizer defensivo: última red antes de enviar al prospecto.
+# Si Gemini emitió tags con formato roto (sin corchetes, con
+# paréntesis, con "es igual a", etc.), los regex de extracción no
+# los atrapan y el texto se iría al cliente como "código". Esta
+# función elimina cualquier rastro visible de tags internos o
+# asignaciones de variables antes de mandar al prospecto.
+# ─────────────────────────────────────────────────────────────
+
+# Palabras clave de tags que jamás deben llegar al cliente.
+_TAG_KEYWORDS = (
+    "CALENDARIO", "LEAD_CAPTURADO", "LEAD CAPTURADO",
+    "EVENTO", "SISTEMA", "CMD_", "NECESITO_MAS_CONTEXTO",
+    "QUIERE_CONTRATAR", "QUIERE_WEB",
+    "CONSULTAR", "AGENDAR",
+)
+
+# Líneas que mencionan asignación de variables del perfil.
+# Cubre tanto "nombre=X" como "nombre es igual a X" y "nombre: X"
+# cuando aparecen junto a otras claves del perfil (heurística: ≥2
+# claves en la misma línea).
+_PERFIL_KEYS_RE = re.compile(
+    r"\b(nombre|negocio|ciudad|interes|interés|tipo_negocio|tipo negocio)\b"
+    r"\s*(=|:| es igual a | es )",
+    re.IGNORECASE,
+)
+
+# Líneas completas con un tag-like bracketed. Ejemplos:
+#   "[CALENDARIO:CONSULTAR:2026-04-22]"
+#   "[Lead_capturado: nombre=...]"
+#   "(calendario consulta 2024-05-24)"
+_LINEA_TAG_LIKE_RE = re.compile(
+    r"^[\s\[\(\{]*\s*(?:" + "|".join(_TAG_KEYWORDS) + r")"
+    r"[\s:_\-\]\)\}]*.*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+# Fragmentos in-line con corchetes o paréntesis que envuelvan un tag.
+_INLINE_BRACKET_TAG_RE = re.compile(
+    r"[\[\(\{][^\]\)\}]*(?:" + "|".join(_TAG_KEYWORDS) + r")"
+    r"[^\]\)\}]*[\]\)\}]",
+    re.IGNORECASE,
+)
+
+# Leak in-line estilo "calendario consulta 2024-05-24" (sin corchetes,
+# a mitad de frase). La conjunción de dos keywords seguidas es señal
+# inequívoca de tag roto — no ocurre en español natural. Matchea la
+# pareja + lo que venga hasta la próxima puntuación fuerte o fin de
+# línea, con un cap de 80 chars para no devorar la respuesta entera.
+_LEAK_INLINE_DOBLE_KW_RE = re.compile(
+    r"(?i)\b(?:calendario|lead[_\s]capturado|evento|sistema|cmd)"
+    r"[\s:_\-]+"
+    r"(?:consultar?|agendar?|nombre|negocio|ciudad|interes|interés|"
+    r"quiere[_\s]\w+)"
+    r"[^.!?\n]{0,80}"
+)
+
+
+def _sanitizar_salida(texto: str) -> str:
+    """Devuelve el texto listo para enviar al prospecto, sin tags
+    internos ni asignaciones de variables. Si detecta que tuvo que
+    limpiar algo, lo loggea en WARNING para medir frecuencia.
+
+    Esta función es la última red: nunca debe fallar al cliente por
+    una regex demasiado agresiva. Por eso no inventa texto nuevo, solo
+    elimina líneas/fragmentos sospechosos y colapsa espacios.
+    """
+    if not texto:
+        return texto
+
+    original = texto
+    out = texto
+
+    # 1) Eliminar fragmentos in-line con corchetes/paréntesis que envuelvan
+    #    una keyword de tag. Esto atrapa "[CALENDARIO:CONSULTAR:...]" y
+    #    también "(calendario consulta 2024-05-24)".
+    out = _INLINE_BRACKET_TAG_RE.sub("", out)
+
+    # 1b) Eliminar leaks in-line "keyword keyword ..." sin corchetes
+    #     tipo "calendario consulta 2024-05-24" que aparezcan a mitad
+    #     de frase. La doble keyword es señal de tag roto.
+    out = _LEAK_INLINE_DOBLE_KW_RE.sub("", out)
+
+    # 2) Eliminar líneas enteras que empiecen (con posibles espacios/
+    #    brackets) con una keyword de tag — cubre el caso sin corchetes
+    #    tipo "calendario consulta 2024-05-24" o "CMD_PAUSAR ...".
+    out = _LINEA_TAG_LIKE_RE.sub("", out)
+
+    # 3) Eliminar líneas con asignación de variables del perfil
+    #    ("nombre=X", "negocio es igual a Y, ciudad es igual a Z").
+    #    Heurística: si la línea tiene ≥2 matches del patrón, es
+    #    claramente un volcado de variables; la borramos.
+    lineas_limpias = []
+    for linea in out.split("\n"):
+        if len(_PERFIL_KEYS_RE.findall(linea)) >= 2:
+            continue
+        lineas_limpias.append(linea)
+    out = "\n".join(lineas_limpias)
+
+    # 4) Colapsar saltos de línea múltiples y espacios al borde.
+    out = re.sub(r"\n{3,}", "\n\n", out).strip()
+
+    # 5) Si el resultado quedó vacío tras limpiar (muy raro — significa
+    #    que Gemini respondió SOLO con tags), devolvemos un fallback
+    #    neutro en vez de mandar string vacío al cliente.
+    if not out:
+        log.warning(
+            "[SANITIZER] Texto quedó vacío tras limpiar. Original: %r",
+            original[:500],
+        )
+        return "Va, déjame revisar eso y te contesto en un momento."
+
+    if out != original:
+        log.warning(
+            "[SANITIZER] Limpié leak de tags en salida al prospecto. "
+            "Original: %r → Limpio: %r",
+            original[:300], out[:300],
+        )
+
+    return out
+
+
+# Detecta menciones a keywords tag-like que NO están dentro de un tag
+# con formato válido. Señal de que Gemini está emitiendo tags rotos.
+_KEYWORD_MENCION_RE = re.compile(
+    r"\b(CALENDARIO|LEAD[_\s]CAPTURADO|QUIERE_CONTRATAR|QUIERE_WEB)\b",
+    re.IGNORECASE,
+)
+
+
+def _log_tag_malformado(phone: str, texto: str) -> None:
+    """Loggea WARNING cuando el texto menciona palabras clave de tag pero
+    NO tiene un tag bien formado (que los regex de extracción atraparían).
+    Sirve para medir en producción con qué frecuencia Gemini emite tags
+    malformados — pista directa para saber si hay que subir la presión
+    en el prompt o cambiar de modelo."""
+    if not texto:
+        return
+    # Tag bien formado = alguna de las regex reales matchea.
+    if (LEAD_TAG_RE.search(texto)
+            or CAL_RE_CONSULTAR.search(texto)
+            or CAL_RE_AGENDAR.search(texto)
+            or EVENTO_CONTRATAR_RE.search(texto)
+            or EVENTO_WEB_RE.search(texto)):
+        return
+    # Sin tag válido, pero ¿hay mención suelta de keyword?
+    if _KEYWORD_MENCION_RE.search(texto):
+        log.warning(
+            "[TAG_MALFORMADO] %s mencionó keyword tag-like sin tag válido. "
+            "Texto: %r", phone, texto[:300],
+        )
 
 
 def notificar_dueno(from_bot_number: str, prospecto_phone: str, datos: dict) -> None:
@@ -3421,6 +3662,11 @@ def _run_llm_pipeline(from_number: str, to_number: str,
 
     respuesta_cruda = preguntar_gemini(from_number, entrada_usuario)
 
+    # Log forense: si la respuesta menciona palabras clave de tag pero
+    # los regex de extracción no las atrapan como tag válido, Gemini
+    # las escribió mal formadas. Queremos medir la frecuencia.
+    _log_tag_malformado(from_number, respuesta_cruda)
+
     for _ in range(2):
         m_cons = CAL_RE_CONSULTAR.search(respuesta_cruda)
         if not m_cons:
@@ -3513,6 +3759,17 @@ def _run_llm_pipeline(from_number: str, to_number: str,
             notificar_quiere_contratar(from_number)
         except Exception:
             log.exception("Error en notificar_quiere_contratar")
+
+    respuesta, quiere_web = _extraer_evento_web(respuesta)
+    if quiere_web:
+        try:
+            notificar_quiere_web(from_number)
+        except Exception:
+            log.exception("Error en notificar_quiere_web")
+
+    # Red final: sanitizer defensivo. Cero leaks de tags/variables al
+    # cliente, pase lo que pase con Gemini.
+    respuesta = _sanitizar_salida(respuesta)
 
     guardar_mensaje(from_number, "assistant", respuesta)
     if respuesta:
