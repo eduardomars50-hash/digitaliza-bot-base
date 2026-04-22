@@ -1,0 +1,70 @@
+# Catálogo oficial — Salón Luna (demo)
+# Todos los precios en pesos mexicanos (MXN).
+# El bot SOLO puede ofrecer lo que aparece aquí.
+
+═══════════════════════════════════════════════════════════
+SERVICIOS DE CABELLO
+═══════════════════════════════════════════════════════════
+
+─────────────────────────────────────────────────────────
+CORTE DE CABELLO
+─────────────────────────────────────────────────────────
+- Corte dama clásico:        $250 MXN · 45 min
+- Corte dama con lavado:     $320 MXN · 60 min
+- Corte caballero:           $180 MXN · 30 min
+- Corte niña (hasta 10 años): $180 MXN · 30 min
+
+─────────────────────────────────────────────────────────
+COLOR Y TINTE
+─────────────────────────────────────────────────────────
+- Tinte raíz (retoque):      $550 MXN · 90 min
+- Tinte completo:            $850 MXN · 2 h
+- Mechas parciales (balayage ligero): $1,200 MXN · 2.5 h
+- Mechas completas (balayage completo): $1,800 MXN · 3.5 h
+- Decoloración total:        desde $1,500 MXN · 4 h (cotizar en persona)
+
+─────────────────────────────────────────────────────────
+PEINADO
+─────────────────────────────────────────────────────────
+- Peinado casual:            $300 MXN · 45 min
+- Peinado de evento (boda, XV, graduación): $650 MXN · 1.5 h
+- Maquillaje social:         $550 MXN · 1 h
+- Paquete novia (peinado + maquillaje + prueba previa): $2,800 MXN
+
+─────────────────────────────────────────────────────────
+TRATAMIENTOS
+─────────────────────────────────────────────────────────
+- Hidratación profunda:      $400 MXN · 45 min
+- Keratina brasileña:        $1,800 MXN · 3 h
+- Botox capilar:             $900 MXN · 1.5 h
+
+═══════════════════════════════════════════════════════════
+MANOS Y PIES
+═══════════════════════════════════════════════════════════
+- Manicure tradicional:      $180 MXN · 45 min
+- Manicure gel / semipermanente: $280 MXN · 60 min
+- Pedicure tradicional:      $220 MXN · 60 min
+- Pedicure con spa:          $350 MXN · 75 min
+
+═══════════════════════════════════════════════════════════
+POLÍTICAS
+═══════════════════════════════════════════════════════════
+
+CANCELACIONES:
+- Hasta 4 horas antes sin cargo.
+- Menos de 4 horas: se pide confirmación para volver a agendar.
+
+PAGOS:
+- Efectivo, transferencia (SPEI) y tarjetas de crédito/débito.
+- No manejamos apartados ni adelantos salvo en paquetes de novia.
+
+HORARIO DE ATENCIÓN:
+- Martes a Sábado, 10:00 a 20:00.
+- Lunes y Domingos cerrado.
+
+NOTA IMPORTANTE PARA EL BOT:
+Este es un salón de DEMO. Si el cliente pregunta específicamente si
+es una demo o quiere contratar el sistema, responde: "Soy el asistente
+virtual demostrativo de Salón Luna. Si quieres ver cómo se ve un bot
+así para tu negocio, mándale WhatsApp directo a Eduardo de Digitaliza
+al +52 56 3183 2858."

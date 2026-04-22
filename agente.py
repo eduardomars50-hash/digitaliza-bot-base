@@ -896,14 +896,60 @@ def _bloque_perfil_historial(phone: str) -> list[dict]:
     ]
 
 
+GEMINI_MAX_REINTENTOS = 2
+GEMINI_FALLBACK_MSG = (
+    "Disculpa, tuve un problema técnico al procesar tu mensaje. "
+    "Un asesor te contacta en un momento."
+)
+
+
+def _llamar_gemini_con_retry(modelo, chat_history, entrada_usuario,
+                              contexto_desc: str = "") -> str:
+    """Llama a Gemini con hasta GEMINI_MAX_REINTENTOS reintentos. Si todos
+    fallan, devuelve "" (string vacío) para que el caller aplique fallback.
+    No re-raise nunca para no romper el turno."""
+    ultimo_error = None
+    for intento in range(1, GEMINI_MAX_REINTENTOS + 2):  # 1 + 2 reintentos
+        try:
+            chat = modelo.start_chat(history=chat_history)
+            resp = chat.send_message(entrada_usuario)
+            texto = (resp.text or "").strip()
+            if texto:
+                return texto
+            ultimo_error = "respuesta vacía"
+        except Exception as e:
+            ultimo_error = f"{type(e).__name__}: {e}"
+            log.warning("[GEMINI][intento %d/%d] %s — %s",
+                        intento, GEMINI_MAX_REINTENTOS + 1,
+                        contexto_desc, ultimo_error)
+            time.sleep(0.5 * intento)  # backoff lineal
+    log.error("[GEMINI] Falló tras %d intentos (%s): %s",
+              GEMINI_MAX_REINTENTOS + 1, contexto_desc, ultimo_error)
+    # Notificar al OWNER — es un error productivo que requiere atención
+    try:
+        _notificar_owner(
+            f"🚨 Gemini falló {GEMINI_MAX_REINTENTOS + 1} veces seguidas\n"
+            f"Contexto: {contexto_desc or '(sin detalle)'}\n"
+            f"Último error: {ultimo_error}\n"
+            f"El cliente recibió mensaje genérico. Revisa logs de Railway."
+        )
+    except Exception:
+        log.exception("[GEMINI] No pude notificar al OWNER del fallo")
+    return ""
+
+
 def preguntar_gemini(phone: str, entrada_usuario, n_contexto: int = CONTEXTO_DEFAULT) -> str:
-    """entrada_usuario puede ser str o lista [texto, PIL.Image]."""
+    """entrada_usuario puede ser str o lista [texto, PIL.Image].
+    Con retry automático + fallback neutral si Gemini está tumbado."""
     modelo = _build_model()
     historial = cargar_historial(phone)[-n_contexto:]
     historia_gemini = _bloque_perfil_historial(phone) + _historial_a_gemini(historial)
-    chat = modelo.start_chat(history=historia_gemini)
-    resp = chat.send_message(entrada_usuario)
-    texto = (resp.text or "").strip()
+    texto = _llamar_gemini_con_retry(
+        modelo, historia_gemini, entrada_usuario,
+        contexto_desc=f"preguntar_gemini phone={phone} ctx={n_contexto}"
+    )
+    if not texto:
+        return GEMINI_FALLBACK_MSG
 
     if SENAL_MAS_CONTEXTO in texto and n_contexto < CONTEXTO_EXTENDIDO:
         log.info("[%s] Gemini pidió más contexto. Reintentando con %d mensajes.",
@@ -913,16 +959,18 @@ def preguntar_gemini(phone: str, entrada_usuario, n_contexto: int = CONTEXTO_DEF
         historia_gemini_ext = (
             _bloque_perfil_historial(phone) + _historial_a_gemini(historial_ext)
         )
-        chat = modelo.start_chat(history=historia_gemini_ext)
-        aviso = entrada_usuario
         if isinstance(entrada_usuario, list):
             aviso = ["[SISTEMA: aquí tienes más contexto, responde al usuario]"] + entrada_usuario
         else:
             aviso = f"[SISTEMA: aquí tienes más contexto, responde al usuario]\n\n{entrada_usuario}"
-        resp = chat.send_message(aviso)
-        texto = (resp.text or "").strip()
+        texto2 = _llamar_gemini_con_retry(
+            modelo, historia_gemini_ext, aviso,
+            contexto_desc=f"preguntar_gemini(ext) phone={phone}"
+        )
+        if texto2:
+            texto = texto2
 
-    return texto or "Disculpa, tuve un problema para responder. ¿Puedes repetir tu mensaje?"
+    return texto or GEMINI_FALLBACK_MSG
 
 
 # ─────────────────────────────────────────────────────────────
@@ -3321,6 +3369,123 @@ def admin_backup_latest():
         download_name=latest.name,
         mimetype="application/gzip",
     )
+
+
+@app.get("/admin/metrics")
+def admin_metrics():
+    """Dashboard JSON de métricas del bot. Mismo token que backup.
+    Útil para medir: cuántos prospectos entran al día, cuántos califican
+    como lead, cuántos eventos QUIERE_CONTRATAR se detectaron, cuántos
+    chats están pausados ahora. Sin base de datos, calcula todo de los
+    JSON files en /data/."""
+    token = request.args.get("token", "")
+    if not BACKUP_ADMIN_TOKEN or token != BACKUP_ADMIN_TOKEN:
+        return "forbidden", 403
+
+    ahora = datetime.utcnow()
+    hoy_ini = ahora.replace(hour=0, minute=0, second=0, microsecond=0)
+    hace_7_dias = ahora - timedelta(days=7)
+    hace_30_dias = ahora - timedelta(days=30)
+
+    def _mtime(p: Path) -> datetime | None:
+        try:
+            return datetime.utcfromtimestamp(p.stat().st_mtime)
+        except Exception:
+            return None
+
+    # Prospectos: cualquier archivo en conversaciones/
+    prospectos_total = 0
+    prospectos_hoy = 0
+    prospectos_7d = 0
+    prospectos_30d = 0
+    try:
+        for conv in CONVERSACIONES_DIR.glob("*.json"):
+            prospectos_total += 1
+            mt = _mtime(conv)
+            if mt is None:
+                continue
+            if mt >= hoy_ini:
+                prospectos_hoy += 1
+            if mt >= hace_7_dias:
+                prospectos_7d += 1
+            if mt >= hace_30_dias:
+                prospectos_30d += 1
+    except Exception:
+        log.exception("[METRICS] error contando prospectos")
+
+    # Leads calificados: archivos en leads/
+    leads_total = 0
+    leads_hoy = 0
+    leads_7d = 0
+    leads_30d = 0
+    try:
+        for lead in LEADS_DIR.glob("*.json"):
+            leads_total += 1
+            mt = _mtime(lead)
+            if mt is None:
+                continue
+            if mt >= hoy_ini:
+                leads_hoy += 1
+            if mt >= hace_7_dias:
+                leads_7d += 1
+            if mt >= hace_30_dias:
+                leads_30d += 1
+    except Exception:
+        log.exception("[METRICS] error contando leads")
+
+    # Eventos QUIERE_CONTRATAR (flags guardados por notificar_quiere_contratar)
+    seg_dir = DATA_DIR / "seguimientos"
+    quiere_contratar_total = 0
+    quiere_contratar_7d = 0
+    try:
+        if seg_dir.exists():
+            for flag in seg_dir.glob("*_quiere_contratar.flag"):
+                quiere_contratar_total += 1
+                mt = _mtime(flag)
+                if mt and mt >= hace_7_dias:
+                    quiere_contratar_7d += 1
+    except Exception:
+        log.exception("[METRICS] error contando quiere_contratar")
+
+    # Pausas activas (handover)
+    try:
+        pausas = _listar_pausados()
+    except Exception:
+        pausas = []
+
+    # Tasas de conversión
+    def _pct(a, b):
+        if not b:
+            return 0.0
+        return round(100.0 * a / b, 1)
+
+    return jsonify({
+        "generated_at": ahora.isoformat() + "Z",
+        "prospectos": {
+            "total": prospectos_total,
+            "hoy": prospectos_hoy,
+            "ultimos_7_dias": prospectos_7d,
+            "ultimos_30_dias": prospectos_30d,
+        },
+        "leads_calificados": {
+            "total": leads_total,
+            "hoy": leads_hoy,
+            "ultimos_7_dias": leads_7d,
+            "ultimos_30_dias": leads_30d,
+        },
+        "intencion_compra": {
+            "total": quiere_contratar_total,
+            "ultimos_7_dias": quiere_contratar_7d,
+        },
+        "tasas_conversion_pct": {
+            "prospecto_a_lead_30d": _pct(leads_30d, prospectos_30d),
+            "lead_a_intencion_7d": _pct(quiere_contratar_7d, leads_7d),
+        },
+        "handover": {
+            "pausas_activas": len(pausas),
+            "chats_pausados": pausas,
+        },
+    })
 
 
 @app.get("/admin/backup-list")

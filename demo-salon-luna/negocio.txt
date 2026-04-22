@@ -1,0 +1,17 @@
+NOMBRE: Salón Luna
+TIPO: Salón de belleza y estética
+DIRECCIÓN: Calle 60 #412, colonia García Ginerés, Mérida, Yucatán
+TELÉFONO: +52 999 000 0000
+HORARIO: Martes a Sábado de 10:00 a 20:00. Lunes y Domingos cerrado.
+WEB: (demo — sin sitio web)
+INSTAGRAM: @salon_luna_demo
+DUEÑA: Luna Pérez
+NOTAS: Salón de belleza demo para que prospectos de Digitaliza vean el bot funcionando con un negocio realista. Servicios principales: cortes, tintes, mechas, peinados para evento, tratamientos capilares, manicure y pedicure.
+
+# ═══════════════════════════════════════════════
+# CONFIGURACIÓN DE AGENDA
+# ═══════════════════════════════════════════════
+# Salón Luna atiende martes a sábado de 10:00 a 19:00 (última cita).
+AGENDA_DIAS: M,X,J,V,S
+AGENDA_HORA_INICIO: 10
+AGENDA_HORA_FIN: 19
