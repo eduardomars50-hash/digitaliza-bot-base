@@ -7,3 +7,16 @@ WEB: somosdigitaliza.com
 INSTAGRAM: @digitaliza_IA
 DUEÑO: Eduardo Mares Gutiérrez
 NOTAS: Agencia enfocada en negocios locales de Mérida (salones, barberías, consultorios médicos y dentales, veterinarias, restaurantes). Operamos remoto — las llamadas son por Google Meet o Zoom. Coexistencia con WhatsApp normal del dueño.
+
+# ═══════════════════════════════════════════════
+# CONFIGURACIÓN DE AGENDA (usada por el motor de citas)
+# ═══════════════════════════════════════════════
+# AGENDA_DIAS: qué días acepta citas el negocio. Formato:
+#   - Lista: "L,M,X,J,V" (Lunes, Martes, Miércoles, Jueves, Viernes)
+#   - Rango: "L-V" (equivalente) o "L-S" (Lunes a Sábado)
+#   - Nombres completos: "Lunes,Martes,Miércoles,Jueves,Viernes" también funciona
+# AGENDA_HORA_INICIO / AGENDA_HORA_FIN: hora en 24h (ej. 15, 9, 20).
+# Default si se omiten: Lunes-Viernes 15:00-20:00.
+AGENDA_DIAS: L,M,X,J,V
+AGENDA_HORA_INICIO: 15
+AGENDA_HORA_FIN: 20

@@ -546,11 +546,11 @@ REGLAS ESTRICTAS:
    recomendar el TIER correcto, y luego presenta ese tier con su precio
    completo (lanzamiento + normal). Default si dudas: Estándar.
 7. Horario: el BOT responde 24/7. NO hay horario fijo de asesores humanos.
-   El bot SOLO propone horarios de cita dentro de L-V 15:00-20:00 (CDT) —
+   El bot SOLO propone horarios de cita dentro de {agenda_dias_texto} {agenda_horario_texto} (CDT) —
    ese es el rango libre para agendar llamadas. Si el prospecto pide otra
-   hora o un fin de semana: "Por mensaje te coordina un asesor para esa
+   hora o un día no habilitado: "Por mensaje te coordina un asesor para esa
    hora, dame un momento" y emite la señal de intención de contacto. NO
-   ofrezcas horarios fuera del rango L-V 15-20.
+   ofrezcas horarios fuera del rango configurado.
 
 MEMORIA Y CONTEXTO:
 - Recibes los últimos mensajes. Si el prospecto hace referencia a algo anterior que
@@ -571,17 +571,16 @@ DETECCIÓN DE INTENCIÓN DE COMPRA (INTERNO):
 CALENDARIO (INTERNO — IMPORTANTE):
 
 HORARIO DISPONIBLE PARA AGENDAR (regla dura):
-- Solo Lunes a Viernes, de 15:00 a 20:00 (CDT/Mérida).
-- Fines de semana NO hay agenda automática.
-- Si el prospecto pide un horario fuera de ese rango (mañanas, tardes
-  antes de 3pm, después de 8pm, sábados o domingos): NO agendes ni
+- Solo {agenda_dias_texto}, de {agenda_horario_texto} (CDT/Mérida).
+- Días fuera de ese rango NO tienen agenda automática.
+- Si el prospecto pide un horario fuera de ese rango: NO agendes ni
   consultes el calendario. Responde:
   "Esa hora cae fuera del rango que tengo libre para agenda automática.
   Te coordino directo con un asesor por mensaje, dame un momento."
   Y al final emite [EVENTO:QUIERE_CONTRATAR] (si no lo emitiste antes)
   para que un humano tome la coordinación.
 
-Si el prospecto pide un horario VÁLIDO (L-V 15:00-20:00):
+Si el prospecto pide un horario VÁLIDO ({agenda_dias_texto} {agenda_horario_texto}):
 
 1. Pregunta qué día le conviene (hoy, mañana, fecha específica).
 2. Cuando tengas la fecha en formato YYYY-MM-DD, responde EXACTAMENTE con una
@@ -693,7 +692,9 @@ def _leer_archivo(nombre: str) -> str:
 
 def _parse_negocio(texto: str) -> dict[str, str]:
     campos = {"nombre": "", "tipo": "", "direccion": "", "telefono": "",
-              "horario": "", "web": "", "instagram": ""}
+              "horario": "", "web": "", "instagram": "",
+              "agenda_dias": "", "agenda_hora_inicio": "",
+              "agenda_hora_fin": ""}
     mapeo = {
         "NOMBRE": "nombre",
         "TIPO": "tipo",
@@ -704,6 +705,10 @@ def _parse_negocio(texto: str) -> dict[str, str]:
         "HORARIO": "horario",
         "WEB": "web",
         "INSTAGRAM": "instagram",
+        "AGENDA_DIAS": "agenda_dias",
+        "AGENDA_DÍAS": "agenda_dias",
+        "AGENDA_HORA_INICIO": "agenda_hora_inicio",
+        "AGENDA_HORA_FIN": "agenda_hora_fin",
     }
     for linea in texto.splitlines():
         if ":" not in linea:
@@ -715,9 +720,98 @@ def _parse_negocio(texto: str) -> dict[str, str]:
     return campos
 
 
+# Config de agenda cacheada por proceso (negocio.txt casi no cambia en
+# runtime; se refresca en cada redeploy). Convierte el string de días
+# "L,M,X,J,V" a un set de weekday numbers (0=Lunes … 6=Domingo).
+_AGENDA_CONFIG_CACHE: dict | None = None
+_DIAS_WEEKDAY_MAP = {
+    "L": 0, "LU": 0, "LUNES": 0,
+    "M": 1, "MA": 1, "MARTES": 1,
+    "X": 2, "MI": 2, "MIÉRCOLES": 2, "MIERCOLES": 2,
+    "J": 3, "JU": 3, "JUEVES": 3,
+    "V": 4, "VI": 4, "VIERNES": 4,
+    "S": 5, "SA": 5, "SÁBADO": 5, "SABADO": 5,
+    "D": 6, "DO": 6, "DOMINGO": 6,
+}
+_WEEKDAY_TO_ES = ["Lunes", "Martes", "Miércoles", "Jueves",
+                  "Viernes", "Sábado", "Domingo"]
+
+
+def _parse_hora(s: str, default: int) -> int:
+    """Acepta '15', '15:00', '15h'. Devuelve hora entera [0..24]."""
+    if not s:
+        return default
+    s = s.strip().lower().replace("h", "").strip()
+    if ":" in s:
+        s = s.split(":", 1)[0].strip()
+    try:
+        h = int(s)
+        if 0 <= h <= 24:
+            return h
+    except ValueError:
+        pass
+    return default
+
+
+def _parse_dias(s: str) -> set[int]:
+    """Acepta 'L,M,X,J,V' o 'L-V' o 'Lunes,Martes,…'. Default L-V."""
+    if not s:
+        return {0, 1, 2, 3, 4}
+    s = s.strip().upper()
+    # Soporta rango tipo "L-V" o "LUNES-VIERNES"
+    if "-" in s and "," not in s:
+        try:
+            a, b = s.split("-", 1)
+            a_num = _DIAS_WEEKDAY_MAP.get(a.strip())
+            b_num = _DIAS_WEEKDAY_MAP.get(b.strip())
+            if a_num is not None and b_num is not None and a_num <= b_num:
+                return set(range(a_num, b_num + 1))
+        except Exception:
+            pass
+    out: set[int] = set()
+    for tok in s.replace(";", ",").split(","):
+        t = tok.strip()
+        if t in _DIAS_WEEKDAY_MAP:
+            out.add(_DIAS_WEEKDAY_MAP[t])
+    return out or {0, 1, 2, 3, 4}
+
+
+def obtener_agenda_config() -> dict:
+    """Devuelve la configuración de agenda del negocio.
+    Fuente: campos AGENDA_* en negocio.txt. Defaults = L-V 15-20 (Eduardo)."""
+    global _AGENDA_CONFIG_CACHE
+    if _AGENDA_CONFIG_CACHE is not None:
+        return _AGENDA_CONFIG_CACHE
+    try:
+        neg = _parse_negocio(_leer_archivo("negocio.txt"))
+    except Exception:
+        neg = {}
+    dias = _parse_dias(neg.get("agenda_dias", ""))
+    h_ini = _parse_hora(neg.get("agenda_hora_inicio", ""), 15)
+    h_fin = _parse_hora(neg.get("agenda_hora_fin", ""), 20)
+    if h_fin <= h_ini:
+        h_fin = min(24, h_ini + 1)
+    dias_nombres = [_WEEKDAY_TO_ES[d] for d in sorted(dias)]
+    # "Lunes, Martes, Miércoles, Jueves y Viernes"
+    if len(dias_nombres) >= 2:
+        dias_texto = ", ".join(dias_nombres[:-1]) + " y " + dias_nombres[-1]
+    else:
+        dias_texto = dias_nombres[0] if dias_nombres else "ningún día"
+    cfg = {
+        "dias_weekdays": dias,
+        "hora_inicio": h_ini,
+        "hora_fin": h_fin,
+        "dias_texto": dias_texto,
+        "horario_texto": f"{h_ini:02d}:00 a {h_fin:02d}:00",
+    }
+    _AGENDA_CONFIG_CACHE = cfg
+    return cfg
+
+
 def build_system_prompt() -> str:
     negocio = _parse_negocio(_leer_archivo("negocio.txt"))
     servicios = _leer_archivo("catalogo.txt") or "(Catálogo vacío)"
+    agenda = obtener_agenda_config()
     return SYSTEM_PROMPT_TEMPLATE.format(
         nombre_negocio=negocio.get("nombre") or "el negocio",
         tipo_negocio=negocio.get("tipo") or "negocio",
@@ -727,6 +821,8 @@ def build_system_prompt() -> str:
         web=negocio.get("web") or "(no especificada)",
         instagram=negocio.get("instagram") or "(no especificado)",
         servicios=servicios,
+        agenda_dias_texto=agenda["dias_texto"],
+        agenda_horario_texto=agenda["horario_texto"],
         senal=SENAL_MAS_CONTEXTO,
     )
 
@@ -1138,18 +1234,18 @@ def _calendar_service():
 
 
 def _slots_del_dia(fecha: str) -> list[int]:
-    """Bloques horarios base (hora del día) según día de la semana, antes de
-    cruzar con el calendario. L-V 9..18, Sáb 10..13, Domingo vacío."""
+    """Bloques horarios base (hora del día) según config de agenda del
+    negocio (negocio.txt → AGENDA_DIAS / AGENDA_HORA_INICIO / AGENDA_HORA_FIN).
+    Si el día no está en los días hábiles configurados, devuelve []."""
     try:
         y, m, d = map(int, fecha.split("-"))
         weekday = datetime(y, m, d).weekday()
     except Exception:
         return []
-    if weekday == 6:
+    cfg = obtener_agenda_config()
+    if weekday not in cfg["dias_weekdays"]:
         return []
-    if weekday == 5:
-        return [10, 11, 12, 13]
-    return list(range(9, 19))
+    return list(range(cfg["hora_inicio"], cfg["hora_fin"]))
 
 
 def consultar_disponibilidad(fecha: str) -> list[str]:
@@ -1472,14 +1568,91 @@ def _verificar_seguimientos() -> None:
         log.exception("Error en scheduler de seguimiento")
 
 
+# ─────────────────────────────────────────────────────────────
+# Backup automático de /data (tarballs con rotación)
+# ─────────────────────────────────────────────────────────────
+# Protege contra escrituras corruptas y da histórico descargable.
+# Para backup off-site real, el endpoint /admin/backup-latest permite
+# bajar el tarball más reciente y guardarlo fuera de Railway.
+
+BACKUP_DIR = DATA_DIR / "backups"
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+BACKUP_INTERVAL_HOURS = int(os.environ.get("BACKUP_INTERVAL_HOURS", "6"))
+BACKUP_RETENTION = int(os.environ.get("BACKUP_RETENTION", "12"))
+BACKUP_ADMIN_TOKEN = os.environ.get("BACKUP_ADMIN_TOKEN", "")
+_ultimo_backup_ts: float = 0.0
+_BACKUP_LOCK = Lock()
+
+
+def _crear_snapshot() -> Path | None:
+    """Crea tarball de /data (excluyendo el propio dir backups) y rota
+    los viejos. Devuelve la ruta del snapshot creado, o None si falla."""
+    import tarfile
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%SZ")
+    dest = BACKUP_DIR / f"snapshot_{ts}.tar.gz"
+    try:
+        with _BACKUP_LOCK:
+            with tarfile.open(dest, "w:gz") as tar:
+                for entry in DATA_DIR.iterdir():
+                    if entry.name == "backups":
+                        continue  # no incluir los backups previos
+                    try:
+                        tar.add(entry, arcname=entry.name)
+                    except Exception:
+                        log.exception("[BACKUP] error agregando %s", entry.name)
+            # Rotación: conservar solo últimos BACKUP_RETENTION
+            snaps = sorted(BACKUP_DIR.glob("snapshot_*.tar.gz"))
+            sobrantes = snaps[:-BACKUP_RETENTION] if len(snaps) > BACKUP_RETENTION else []
+            for s in sobrantes:
+                try:
+                    s.unlink()
+                except Exception:
+                    pass
+        log.info("[BACKUP] Snapshot creado: %s (%.1f KB)", dest.name,
+                 dest.stat().st_size / 1024)
+        return dest
+    except Exception:
+        log.exception("[BACKUP] No se pudo crear snapshot")
+        try:
+            if dest.exists():
+                dest.unlink()
+        except Exception:
+            pass
+        return None
+
+
+def _backup_tick() -> None:
+    """Llamado desde scheduler_loop cada hora. Solo crea snapshot si
+    han pasado BACKUP_INTERVAL_HOURS desde el último."""
+    global _ultimo_backup_ts
+    ahora = time.time()
+    if (ahora - _ultimo_backup_ts) < (BACKUP_INTERVAL_HOURS * 3600):
+        return
+    snap = _crear_snapshot()
+    if snap is not None:
+        _ultimo_backup_ts = ahora
+
+
 def _scheduler_loop() -> None:
-    """Corre cada hora revisando seguimientos."""
+    """Corre cada hora revisando seguimientos + backups."""
+    # Snapshot inicial al arrancar (post-restart): si llevaba tiempo caído,
+    # capturamos estado inicial antes de que llegue tráfico.
+    try:
+        _crear_snapshot()
+        global _ultimo_backup_ts
+        _ultimo_backup_ts = time.time()
+    except Exception:
+        log.exception("[BACKUP] Error en snapshot inicial")
     while True:
         time.sleep(3600)  # 1 hora
         try:
             _verificar_seguimientos()
         except Exception:
             log.exception("Error en scheduler_loop")
+        try:
+            _backup_tick()
+        except Exception:
+            log.exception("Error en backup_tick")
 
 
 # Iniciar scheduler como daemon thread
@@ -3120,6 +3293,57 @@ def home():
 @app.get("/healthz")
 def health():
     return jsonify({"ok": True, "ts": datetime.utcnow().isoformat() + "Z"})
+
+
+@app.get("/admin/backup-latest")
+def admin_backup_latest():
+    """Descarga el snapshot más reciente de /data. Protegido por
+    BACKUP_ADMIN_TOKEN (env var). Eduardo lo consume manual desde su
+    compu con `curl "https://tubot.up.railway.app/admin/backup-latest?token=XXX" -o bk.tar.gz`
+    o desde el navegador. Si no está configurado el token, 403."""
+    from flask import send_file
+    token = request.args.get("token", "")
+    if not BACKUP_ADMIN_TOKEN:
+        return jsonify({"error": "BACKUP_ADMIN_TOKEN no configurado"}), 403
+    if token != BACKUP_ADMIN_TOKEN:
+        return "forbidden", 403
+    snaps = sorted(BACKUP_DIR.glob("snapshot_*.tar.gz"))
+    if not snaps:
+        # Forzar un snapshot si no hay ninguno (primera vez)
+        forzado = _crear_snapshot()
+        if forzado is None:
+            return jsonify({"error": "no hay snapshots y no pude crear uno"}), 500
+        snaps = [forzado]
+    latest = snaps[-1]
+    return send_file(
+        str(latest),
+        as_attachment=True,
+        download_name=latest.name,
+        mimetype="application/gzip",
+    )
+
+
+@app.get("/admin/backup-list")
+def admin_backup_list():
+    """Lista los snapshots disponibles (nombre + tamaño + fecha). Mismo token."""
+    token = request.args.get("token", "")
+    if not BACKUP_ADMIN_TOKEN or token != BACKUP_ADMIN_TOKEN:
+        return "forbidden", 403
+    snaps = sorted(BACKUP_DIR.glob("snapshot_*.tar.gz"))
+    return jsonify({
+        "count": len(snaps),
+        "retention": BACKUP_RETENTION,
+        "interval_hours": BACKUP_INTERVAL_HOURS,
+        "snapshots": [
+            {
+                "name": s.name,
+                "size_kb": round(s.stat().st_size / 1024, 1),
+                "modified": datetime.utcfromtimestamp(
+                    s.stat().st_mtime).isoformat() + "Z",
+            }
+            for s in snaps
+        ],
+    })
 
 
 @app.get("/webhook")
