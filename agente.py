@@ -679,6 +679,85 @@ DETECCIÓN DE INTENCIÓN DE COMPRA (INTERNO):
   Esta señal es interna, NO se muestra al cliente, no la menciones. Solo emítela UNA
   vez por conversación.
 
+TAGS DE ALERTA E INTELIGENCIA COMERCIAL (INTERNOS):
+
+Además del evento de intención de compra, emite estos tags cuando
+corresponda. Todos van al FINAL de tu respuesta, cada uno en su propia
+línea, y NUNCA se muestran al cliente (el servidor los elimina antes
+de enviar).
+
+1. [ALERTA_PRECIO]
+   Emítelo cuando el prospecto cuestiona o rechaza el precio de forma
+   directa: "está caro", "no tengo ese presupuesto", "¿no me puedes
+   hacer un mejor precio?", "¿no hay descuento?", "es mucho".
+   Tú respondes natural al cliente (recuérdale que es precio de
+   lanzamiento, o sugiere tier más bajo), pero además emites la
+   alerta para que Eduardo sepa.
+
+2. [COMPETIDOR: nombre=X; precio=Y]
+   Emítelo cuando el prospecto menciona otra agencia, plataforma o
+   solución con la que te compara. Ejemplos: "pero ManyChat me cobra
+   menos", "vi uno de Automate.io a $1,500", "otra agencia me ofreció
+   por $800". Llena 'nombre' con lo que dijo el prospecto y 'precio'
+   con el número si lo dio; si no hay número pon "no especificado".
+   Si no hay nombre claro, pon "desconocido".
+
+3. [INTENTO_FUTURO]
+   Emítelo cuando el prospecto dice que lo pensará o lo verá después
+   ("después te digo", "la próxima semana lo vemos", "déjame pensarlo",
+   "te confirmo mañana"). NO insistas — cierra amable y emite el tag.
+
+4. [PERDIDA: razon=precio|producto|no_respondio|otro]
+   Emítelo SOLO si la conversación claramente terminó SIN venta y
+   puedes inferir la razón. Ejemplos:
+   - "ya lo pensé bien y no" → [PERDIDA: razon=precio] (si venía de ALERTA_PRECIO)
+   - "no es lo que busco" → [PERDIDA: razon=producto]
+   - "otra agencia" → [PERDIDA: razon=otro]
+   Si el prospecto solo dice "gracias" sin decir que no, NO emitas
+   PERDIDA. Espera a que sea explícito.
+
+5. [REFERIDO: numero=X; notas=Y]
+   Emítelo cuando el prospecto menciona o recomienda a otro dueño
+   de negocio que podría interesarle. Ejemplo: "mi cuñada tiene una
+   veterinaria en Progreso, le podrías escribir". Llena 'numero' con
+   el teléfono si lo dio; si no lo dio, pon "pendiente" y en 'notas'
+   pon el nombre/negocio/ciudad que el prospecto mencionó. NO pidas
+   el número si no lo dan espontáneamente — solo registra lo que hay.
+
+6. [ESCALACION]
+   Emítelo cuando el prospecto pide explícitamente hablar con un
+   humano, muestra frustración persistente, o tras 2+ intentos de
+   aclaración sin éxito. Frases: "pásame con alguien", "quiero hablar
+   con una persona real", "esto no me está ayudando". Tu respuesta al
+   cliente es tranquila ("va, le aviso a Eduardo ahora mismo para
+   que te escriba directo") y emites la alerta. Después de emitir
+   [ESCALACION] en un turno, asume que un humano tomará y baja la
+   intensidad de venta en los siguientes turnos.
+
+PREGUNTA DE REFERIDOS AL CERRAR (NUEVA REGLA):
+Cuando el prospecto ya aceptó una cita o emitiste [EVENTO:QUIERE_CONTRATAR],
+en el mismo turno O en el turno siguiente, pregunta de forma natural:
+  "Oye, una pregunta rápida: ¿conoces a otro dueño de negocio local a
+   quien también pudiera servirle esto? Si me pasas su número o me
+   dices quién es, yo le escribo con tu recomendación 🙏"
+Si el cliente menciona a alguien, captura con [REFERIDO: numero=X; notas=Y].
+Si dice que no o ignora la pregunta, no insistas. Emítela UNA sola vez
+por conversación.
+
+REGLA ANTI-AMBIGÜEDAD (CRÍTICO):
+- Si ya le preguntaste algo al cliente y su respuesta fue AMBIGUA
+  (no clara, no contesta directo), puedes re-preguntar UNA vez con
+  naturalidad. Si su SEGUNDA respuesta sigue siendo ambigua, NO
+  preguntes una tercera vez. Toma la decisión más lógica según el
+  contexto y avanza. Ejemplo: preguntaste "¿presencial o Zoom?" y
+  el cliente dice "como tú me digas" dos veces → eliges Zoom (más
+  común y menos fricción) y avanzas con ese supuesto.
+- NUNCA asumas que el prospecto confirmó algo que NO dijo explícitamente.
+  Si el cliente dice "suena bien" sobre un precio, NO asumas que ya
+  compró. "Suena bien" no es "lo tomo". Para cualquier confirmación
+  dura (compra, cita, precio), necesitas un SÍ claro. Si no lo tienes,
+  preguntas antes de emitir tags de confirmación.
+
 FORMATO DE TAGS INTERNOS (LÉELO DOS VECES — ES CRÍTICO):
 
 Los tags [CALENDARIO:...], [LEAD_CAPTURADO:...], [EVENTO:...] son señales
@@ -1635,6 +1714,20 @@ def agendar_cita(
 CONFIG_PATH = DATA_DIR / "config.json"
 EVENTO_CONTRATAR_RE = re.compile(r"\[EVENTO:QUIERE_CONTRATAR\]", re.IGNORECASE)
 EVENTO_WEB_RE = re.compile(r"\[EVENTO:QUIERE_WEB\]", re.IGNORECASE)
+
+# Tags de inteligencia comercial — Fase 1 del merge con bot hermano.
+ALERTA_PRECIO_RE = re.compile(r"\[ALERTA_PRECIO\]", re.IGNORECASE)
+INTENTO_FUTURO_RE = re.compile(r"\[INTENTO_FUTURO\]", re.IGNORECASE)
+ESCALACION_RE = re.compile(r"\[ESCALACION\]", re.IGNORECASE)
+COMPETIDOR_RE = re.compile(
+    r"\[COMPETIDOR:\s*([^\]]+)\]", re.IGNORECASE,
+)
+PERDIDA_RE = re.compile(
+    r"\[PERDIDA:\s*razon\s*=\s*([a-z_]+)\s*\]", re.IGNORECASE,
+)
+REFERIDO_RE = re.compile(
+    r"\[REFERIDO:\s*([^\]]+)\]", re.IGNORECASE,
+)
 SEGUIMIENTO_DIR = DATA_DIR / "seguimiento"
 SEGUIMIENTO_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1817,6 +1910,148 @@ def _extraer_evento_web(texto: str) -> tuple[str, bool]:
     if EVENTO_WEB_RE.search(texto):
         return EVENTO_WEB_RE.sub("", texto).strip(), True
     return texto, False
+
+
+# ─────────────────────────────────────────────────────────────
+# Tags de inteligencia comercial (Fase 1 del merge con bot hermano).
+# Cada extractor devuelve (texto_limpio, payload_o_None).
+# ─────────────────────────────────────────────────────────────
+
+def _parse_kv_pairs(cuerpo: str) -> dict[str, str]:
+    """Parsea 'k1=v1; k2=v2' en dict. Si el cuerpo usa ';', ese es el
+    separador (los valores pueden tener comas como literales). Si NO hay
+    ';', cae al comportamiento permisivo con ',' — cubre errores del
+    modelo que use coma cuando el prompt pide ';'."""
+    separador = ";" if ";" in cuerpo else ","
+    datos: dict[str, str] = {}
+    for parte in cuerpo.split(separador):
+        if "=" in parte:
+            k, v = parte.split("=", 1)
+            datos[k.strip().lower()] = v.strip()
+    return datos
+
+
+def _extraer_alerta_precio(texto: str) -> tuple[str, bool]:
+    if ALERTA_PRECIO_RE.search(texto):
+        return ALERTA_PRECIO_RE.sub("", texto).strip(), True
+    return texto, False
+
+
+def _extraer_intento_futuro(texto: str) -> tuple[str, bool]:
+    if INTENTO_FUTURO_RE.search(texto):
+        return INTENTO_FUTURO_RE.sub("", texto).strip(), True
+    return texto, False
+
+
+def _extraer_escalacion(texto: str) -> tuple[str, bool]:
+    if ESCALACION_RE.search(texto):
+        return ESCALACION_RE.sub("", texto).strip(), True
+    return texto, False
+
+
+def _extraer_competidor(texto: str) -> tuple[str, dict | None]:
+    m = COMPETIDOR_RE.search(texto)
+    if not m:
+        return texto, None
+    datos = _parse_kv_pairs(m.group(1))
+    return COMPETIDOR_RE.sub("", texto).strip(), datos
+
+
+def _extraer_perdida(texto: str) -> tuple[str, str | None]:
+    m = PERDIDA_RE.search(texto)
+    if not m:
+        return texto, None
+    return PERDIDA_RE.sub("", texto).strip(), m.group(1).lower()
+
+
+def _extraer_referido(texto: str) -> tuple[str, dict | None]:
+    m = REFERIDO_RE.search(texto)
+    if not m:
+        return texto, None
+    datos = _parse_kv_pairs(m.group(1))
+    return REFERIDO_RE.sub("", texto).strip(), datos
+
+
+def notificar_alerta_precio(phone: str) -> None:
+    """Un flag por conversación, evita spam si el cliente cuestiona varias veces."""
+    seg_path = SEGUIMIENTO_DIR / f"{normalizar_numero(phone)}_alerta_precio.flag"
+    if seg_path.exists():
+        return
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", phone)
+    tipo = perfil.get("tipo_negocio", "?")
+    _notificar_owner(
+        f"💰 ALERTA de precio\n"
+        f"Nombre: {nombre} ({tipo})\n"
+        f"Número: {phone}\n"
+        f"El prospecto cuestionó el precio. Considera ofrecerle un tier "
+        f"más bajo o recordarle que es precio de lanzamiento."
+    )
+    seg_path.write_text(datetime.utcnow().isoformat() + "Z")
+
+
+def notificar_intento_futuro(phone: str) -> None:
+    seg_path = SEGUIMIENTO_DIR / f"{normalizar_numero(phone)}_intento_futuro.flag"
+    if seg_path.exists():
+        return
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", phone)
+    _notificar_owner(
+        f"⏳ Prospecto dijo 'después'\n"
+        f"Nombre: {nombre}\n"
+        f"Número: {phone}\n"
+        f"Agendar follow-up manual en ~3-7 días."
+    )
+    seg_path.write_text(datetime.utcnow().isoformat() + "Z")
+
+
+def notificar_escalacion(phone: str) -> None:
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", phone)
+    _notificar_owner(
+        f"🚨 ESCALACIÓN A HUMANO\n"
+        f"Nombre: {nombre}\n"
+        f"Número: {phone}\n"
+        f"El prospecto pidió hablar con una persona o muestra frustración. "
+        f"Escríbele directo cuanto antes."
+    )
+
+
+def notificar_competidor(phone: str, datos: dict) -> None:
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", phone)
+    _notificar_owner(
+        f"🥊 Competidor mencionado\n"
+        f"Nombre: {nombre} — {phone}\n"
+        f"Competidor: {datos.get('nombre', '?')}\n"
+        f"Precio mencionado: {datos.get('precio', '?')}"
+    )
+
+
+def notificar_perdida(phone: str, razon: str) -> None:
+    seg_path = SEGUIMIENTO_DIR / f"{normalizar_numero(phone)}_perdida.flag"
+    if seg_path.exists():
+        return
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", phone)
+    _notificar_owner(
+        f"📉 Lead perdido\n"
+        f"Nombre: {nombre}\n"
+        f"Número: {phone}\n"
+        f"Razón: {razon}"
+    )
+    seg_path.write_text(datetime.utcnow().isoformat() + "Z")
+
+
+def notificar_referido(phone: str, datos: dict) -> None:
+    perfil = _perfil_cliente(phone)
+    nombre = perfil.get("nombre", phone)
+    _notificar_owner(
+        f"🤝 Nuevo REFERIDO\n"
+        f"De: {nombre} ({phone})\n"
+        f"Número referido: {datos.get('numero', 'pendiente')}\n"
+        f"Notas: {datos.get('notas', '(sin notas)')}"
+    )
 
 
 # ─── SCHEDULER DE SEGUIMIENTO (background thread) ───
@@ -2021,6 +2256,8 @@ _TAG_KEYWORDS = (
     "EVENTO", "SISTEMA", "CMD_", "NECESITO_MAS_CONTEXTO",
     "QUIERE_CONTRATAR", "QUIERE_WEB",
     "CONSULTAR", "AGENDAR",
+    "ALERTA_PRECIO", "INTENTO_FUTURO", "ESCALACION",
+    "COMPETIDOR", "PERDIDA", "REFERIDO",
 )
 
 # Líneas que mencionan asignación de variables del perfil.
@@ -3766,6 +4003,50 @@ def _run_llm_pipeline(from_number: str, to_number: str,
             notificar_quiere_web(from_number)
         except Exception:
             log.exception("Error en notificar_quiere_web")
+
+    # Tags de inteligencia comercial (Fase 1). El orden importa:
+    # primero los simples (flags), luego los payload-rich.
+    respuesta, alerta_precio = _extraer_alerta_precio(respuesta)
+    if alerta_precio:
+        try:
+            notificar_alerta_precio(from_number)
+        except Exception:
+            log.exception("Error en notificar_alerta_precio")
+
+    respuesta, intento_futuro = _extraer_intento_futuro(respuesta)
+    if intento_futuro:
+        try:
+            notificar_intento_futuro(from_number)
+        except Exception:
+            log.exception("Error en notificar_intento_futuro")
+
+    respuesta, escalacion = _extraer_escalacion(respuesta)
+    if escalacion:
+        try:
+            notificar_escalacion(from_number)
+        except Exception:
+            log.exception("Error en notificar_escalacion")
+
+    respuesta, datos_competidor = _extraer_competidor(respuesta)
+    if datos_competidor:
+        try:
+            notificar_competidor(from_number, datos_competidor)
+        except Exception:
+            log.exception("Error en notificar_competidor")
+
+    respuesta, razon_perdida = _extraer_perdida(respuesta)
+    if razon_perdida:
+        try:
+            notificar_perdida(from_number, razon_perdida)
+        except Exception:
+            log.exception("Error en notificar_perdida")
+
+    respuesta, datos_referido = _extraer_referido(respuesta)
+    if datos_referido:
+        try:
+            notificar_referido(from_number, datos_referido)
+        except Exception:
+            log.exception("Error en notificar_referido")
 
     # Red final: sanitizer defensivo. Cero leaks de tags/variables al
     # cliente, pase lo que pase con Gemini.
