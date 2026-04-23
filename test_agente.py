@@ -202,5 +202,187 @@ class TestSecurityLog(unittest.TestCase):
             self.assertTrue(any(e["tipo"] == "test_tipo" for e in datos))
 
 
+class TestSanitizerSalida(unittest.TestCase):
+    """Red final anti-leak de tags. Los casos cubren los leaks reales
+    vistos en producción 2026-04-22 (screenshot de Eduardo)."""
+
+    def test_tag_bien_formado_se_elimina(self):
+        t = agente._sanitizar_salida(
+            "[CALENDARIO:CONSULTAR:2026-04-23]\nDéjame ver qué tengo libre."
+        )
+        self.assertNotIn("CALENDARIO", t.upper())
+        self.assertIn("Déjame", t)
+
+    def test_lead_capturado_bien_formado_se_elimina(self):
+        t = agente._sanitizar_salida(
+            "[LEAD_CAPTURADO: nombre=Juan; negocio=Barber; ciudad=Mérida]\n"
+            "Genial, Juan. ¿Qué tal va el negocio?"
+        )
+        self.assertNotIn("LEAD_CAPTURADO", t.upper())
+        self.assertIn("Genial", t)
+
+    def test_leak_inline_sin_corchetes(self):
+        """Caso real del screenshot: 'calendario consulta 2024-05-24'
+        a mitad de frase."""
+        t = agente._sanitizar_salida(
+            "Claro, déjame checar. calendario consulta 2024-05-24\n"
+            "¿Qué día te acomoda?"
+        )
+        self.assertNotIn("calendario consulta", t.lower())
+        self.assertIn("Claro", t)
+
+    def test_leak_parentesis_es_igual_a(self):
+        """Caso real: '(negocio es igual a X, ciudad es igual a Y)'."""
+        t = agente._sanitizar_salida(
+            "Perfecto (nombre es igual a Juan, negocio es igual a "
+            "consultorio, ciudad es igual a Mérida). ¿Qué día?"
+        )
+        self.assertNotIn("es igual a", t.lower())
+
+    def test_texto_limpio_no_se_toca(self):
+        original = "¡Qué onda! Aquí de Digitaliza. ¿En qué te ayudamos?"
+        self.assertEqual(agente._sanitizar_salida(original), original)
+
+    def test_evento_quiere_web_se_elimina(self):
+        t = agente._sanitizar_salida(
+            "Te paso con Eduardo para cotizar bien.\n[EVENTO:QUIERE_WEB]"
+        )
+        self.assertNotIn("QUIERE_WEB", t.upper())
+
+    def test_fallback_si_quedo_vacio(self):
+        """Si Gemini respondió solo con tags, devolvemos texto neutral."""
+        t = agente._sanitizar_salida(
+            "[LEAD_CAPTURADO: nombre=X; negocio=Y; ciudad=Z]\n"
+            "[EVENTO:QUIERE_CONTRATAR]"
+        )
+        self.assertTrue(len(t) > 0)
+
+
+class TestExtractoresInteligenciaComercial(unittest.TestCase):
+    """Tags de Fase 1 inspirados en bot de Emilio Bustani."""
+
+    def test_alerta_precio_flag(self):
+        limpio, flag = agente._extraer_alerta_precio(
+            "El precio de lanzamiento es $2500.\n[ALERTA_PRECIO]"
+        )
+        self.assertTrue(flag)
+        self.assertNotIn("ALERTA", limpio.upper())
+
+    def test_intento_futuro_flag(self):
+        limpio, flag = agente._extraer_intento_futuro(
+            "Va, aquí estamos.\n[INTENTO_FUTURO]"
+        )
+        self.assertTrue(flag)
+        self.assertNotIn("INTENTO", limpio.upper())
+
+    def test_escalacion_flag(self):
+        limpio, flag = agente._extraer_escalacion(
+            "Ya le aviso a Eduardo.\n[ESCALACION]"
+        )
+        self.assertTrue(flag)
+        self.assertNotIn("ESCALACION", limpio.upper())
+
+    def test_competidor_con_payload(self):
+        limpio, datos = agente._extraer_competidor(
+            "Entiendo.\n[COMPETIDOR: nombre=ManyChat; precio=1500]"
+        )
+        self.assertEqual(datos, {"nombre": "ManyChat", "precio": "1500"})
+        self.assertNotIn("COMPETIDOR", limpio.upper())
+
+    def test_perdida_con_razon(self):
+        limpio, razon = agente._extraer_perdida(
+            "Entiendo.\n[PERDIDA: razon=precio]"
+        )
+        self.assertEqual(razon, "precio")
+        self.assertNotIn("PERDIDA", limpio.upper())
+
+    def test_referido_notas_con_coma(self):
+        """Las notas pueden contener comas; el separador principal es ';'."""
+        limpio, datos = agente._extraer_referido(
+            "Genial.\n[REFERIDO: numero=5299887766; "
+            "notas=mi cuñada Ale, consultorio dental]"
+        )
+        self.assertEqual(datos["numero"], "5299887766")
+        self.assertEqual(datos["notas"], "mi cuñada Ale, consultorio dental")
+
+    def test_referido_pendiente(self):
+        limpio, datos = agente._extraer_referido(
+            "[REFERIDO: numero=pendiente; notas=Claudia, vet Progreso]"
+        )
+        self.assertEqual(datos["numero"], "pendiente")
+
+    def test_evento_web_flag(self):
+        limpio, flag = agente._extraer_evento_web(
+            "Te conecto con Eduardo.\n[EVENTO:QUIERE_WEB]"
+        )
+        self.assertTrue(flag)
+        self.assertNotIn("WEB", limpio.upper())
+
+
+class TestClasificacionTipoCliente(unittest.TestCase):
+    """Segmentación de Fase 2 — niveles del embudo."""
+
+    PHONE = "525544445555"
+
+    def setUp(self):
+        # Cada test parte de un estado limpio para ESTE phone.
+        import shutil
+        phone_norm = agente.normalizar_numero(self.PHONE)
+        for d in (agente.SEGUIMIENTO_DIR, agente.LEADS_DIR):
+            for suffix in (".flag", ".json"):
+                for p in d.glob(f"{phone_norm}*{suffix}"):
+                    p.unlink(missing_ok=True)
+
+    def test_sin_nada_es_nuevo(self):
+        self.assertEqual(
+            agente._clasificar_tipo_cliente(self.PHONE), "nuevo"
+        )
+
+    def test_con_lead_es_prospecto(self):
+        agente.guardar_lead(
+            self.PHONE,
+            {"nombre": "Juan", "negocio": "Barber", "ciudad": "Mérida"},
+        )
+        self.assertEqual(
+            agente._clasificar_tipo_cliente(self.PHONE), "prospecto"
+        )
+
+    def test_con_quiere_contratar_es_cliente_activo(self):
+        agente.guardar_lead(
+            self.PHONE,
+            {"nombre": "Juan", "negocio": "Barber", "ciudad": "Mérida"},
+        )
+        flag = agente.SEGUIMIENTO_DIR / (
+            f"{agente.normalizar_numero(self.PHONE)}_quiere_contratar.flag"
+        )
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text("x")
+        self.assertEqual(
+            agente._clasificar_tipo_cliente(self.PHONE), "cliente_activo"
+        )
+
+    def test_con_referido_y_contrato_es_vip(self):
+        ref = agente.SEGUIMIENTO_DIR / (
+            f"{agente.normalizar_numero(self.PHONE)}_referido.flag"
+        )
+        qc = agente.SEGUIMIENTO_DIR / (
+            f"{agente.normalizar_numero(self.PHONE)}_quiere_contratar.flag"
+        )
+        ref.parent.mkdir(parents=True, exist_ok=True)
+        ref.write_text("x")
+        qc.write_text("x")
+        self.assertEqual(
+            agente._clasificar_tipo_cliente(self.PHONE), "vip"
+        )
+
+    def test_phone_vacio_cae_a_nuevo(self):
+        self.assertEqual(agente._clasificar_tipo_cliente(""), "nuevo")
+
+    def test_contexto_incluye_tipo_y_guidance(self):
+        ctx = agente._contexto_tipo_cliente(self.PHONE)
+        self.assertIn("nuevo", ctx)
+        self.assertIn("TIPO DE PROSPECTO", ctx)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
