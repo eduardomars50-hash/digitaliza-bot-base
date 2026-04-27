@@ -2488,7 +2488,7 @@ _TAG_KEYWORDS = (
     "ALERTA_PRECIO", "INTENTO_FUTURO", "ESCALACION",
     "COMPETIDOR", "PERDIDA", "REFERIDO",
     "PLANTILLA", "seguimiento_digitaliza",
-    "ETIQUETAR", "QUITAR_ETIQUETA",
+    "ETIQUETAR", "QUITAR_ETIQUETA", "ULTIMOS_ENVIOS",
 )
 
 # Líneas que mencionan asignación de variables del perfil.
@@ -2769,6 +2769,41 @@ Eduardo: "Dale 50% de descuento a Juan"
 COMANDOS QUE PUEDES EMITIR (el bot los ejecuta y elimina del mensaje antes de
 mandártelo; NO los muestres, NO los menciones al usuario final).
 
+═══════════════════════════════════════════════════════════════
+REGLA ABSOLUTA DE EMISIÓN DE TAGS (CRÍTICO — el bug más caro)
+═══════════════════════════════════════════════════════════════
+Si Eduardo te pide mandar / enviar / escribir / contestar / pasarle
+algo a un cliente, ESTÁS OBLIGADO a emitir el tag correspondiente
+EN ESE MISMO TURNO, en línea sola, al final del mensaje.
+
+NO basta con redactar el mensaje en tu respuesta a Eduardo. NO basta
+con decir "voy a mandárselo". El tag DEBE aparecer literalmente al
+final, o el server no manda nada y el cliente no recibe nada — y
+Eduardo cree que sí porque tú dijiste "va, ahí va".
+
+Ejemplos de FALLA común (NUNCA hagas esto — el cliente NO recibe nada):
+
+  Eduardo: "Mándale a Regina que retomamos mañana"
+  ❌ Tu respuesta SIN tag: "Va, le mando a Regina: 'Hola Regina, retomamos mañana, te confirmo el horario.' Quedo pendiente."
+     (El cliente NO recibe nada. Solo redactaste para mostrarle a Eduardo.)
+  ✅ Tu respuesta CORRECTA:
+     "Va, ahí va el mensaje para Regina.
+     [CMD_ENVIAR: +5219991234567 | Hola Regina, retomamos mañana, te confirmo horario en un rato.]"
+     (El tag al final dispara el envío real.)
+
+  Eduardo: "Escríbele a Francisco con la plantilla"
+  ❌ SIN tag: "Va, le mando la plantilla de seguimiento ahora mismo."
+  ✅ CORRECTO: "Va, le mando la plantilla.
+     [CMD_ENVIAR_PLANTILLA: +5219996373570 | Francisco | la app a la medida para tu consultorio]"
+
+REGLA DE ORO: si tu turno menciona "le mando", "le envío", "ahí va",
+"le llega" o cualquier referencia a un envío al cliente, ASEGÚRATE
+de que el tag correspondiente esté en línea sola al final. Si no lo
+puedes emitir por algo (falta el número, falta nombre, etc.), NO digas
+"ahí va" — di literalmente "necesito X dato antes de mandarlo".
+
+═══════════════════════════════════════════════════════════════
+
 1. ESCRIBIR A UN CLIENTE (cuando Eduardo te pide "escríbele a +52..., mándale...",
    "dile a...", "contesta al +52...", etc.):
      [CMD_ENVIAR: +52XXXXXXXXXX | texto del mensaje al cliente]
@@ -2867,6 +2902,20 @@ mandártelo; NO los muestres, NO los menciones al usuario final).
 1d. QUITAR la etiqueta interna de un cliente (cuando Eduardo dice "quítale
     la etiqueta", "ya no le llames así", "olvida ese alias"):
      [CMD_QUITAR_ETIQUETA: +52XXXXXXXXXX]
+
+1e. VER LOS ÚLTIMOS ENVÍOS al cliente (texto y plantillas) con su resultado
+    OK/error. Sirve para diagnosticar por qué un mensaje no llegó.
+    Eduardo te lo pide con frases como: "muéstrame los últimos envíos",
+    "cuáles fueron los últimos mensajes que mandaste", "qué pasó con los
+    envíos", "se mandó el mensaje a Regina?", "le llegó a Francisco?":
+     [CMD_ULTIMOS_ENVIOS]
+   - Sin parámetros. El sistema te devuelve los últimos 15 con timestamp,
+     destino, contenido truncado, ✅ o ❌ y razón si falló.
+   - Si Eduardo solo pregunta por UN cliente específico ("le llegó a
+     Regina?"), igual emite [CMD_ULTIMOS_ENVIOS] y de la lista que el
+     sistema te devuelva, le destacas las líneas de ese cliente.
+   - El buffer se reinicia cada vez que Railway redeploya (cada commit
+     a main). Si dice "no tengo registro", explica eso.
 
 2. BORRAR conversación de un cliente:
      [CMD_BORRAR: +52XXXXXXXXXX]
@@ -3098,6 +3147,54 @@ CMD_ETIQUETAR_RE = re.compile(
 CMD_QUITAR_ETIQUETA_RE = re.compile(
     r"\[CMD_QUITAR_ETIQUETA:\s*(\+?\d+)\s*\]", re.IGNORECASE,
 )
+CMD_ULTIMOS_ENVIOS_RE = re.compile(
+    r"\[CMD_ULTIMOS_ENVIOS\]", re.IGNORECASE,
+)
+
+# Buffer en memoria de los últimos intentos de envío al cliente. Se llena
+# desde _enviar y _enviar_plantilla. Se vacía al reiniciar el proceso —
+# es solo debugging rápido para que Eduardo vea por WhatsApp qué pasó.
+_ULTIMOS_ENVIOS_MAX = 20
+_ULTIMOS_ENVIOS: list[dict] = []
+_ULTIMOS_ENVIOS_LOCK = Lock()
+
+
+def _registrar_envio(tipo: str, phone: str, ok: bool, detalle: str,
+                     contenido: str = "") -> None:
+    """Empuja un intento al buffer circular. tipo='texto'|'plantilla'.
+    detalle es el primer error o "" si todo bien. contenido es el body
+    o "Nombre + tema" para plantillas (truncado a 120 chars)."""
+    entry = {
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "tipo": tipo,
+        "phone": phone,
+        "ok": ok,
+        "detalle": detalle[:240] if detalle else "",
+        "contenido": (contenido or "")[:120],
+    }
+    with _ULTIMOS_ENVIOS_LOCK:
+        _ULTIMOS_ENVIOS.append(entry)
+        if len(_ULTIMOS_ENVIOS) > _ULTIMOS_ENVIOS_MAX:
+            _ULTIMOS_ENVIOS.pop(0)
+
+
+def _formato_ultimos_envios() -> str:
+    """Devuelve los últimos envíos como texto legible para WhatsApp."""
+    with _ULTIMOS_ENVIOS_LOCK:
+        items = list(reversed(_ULTIMOS_ENVIOS))  # más reciente arriba
+    if not items:
+        return ("ℹ️ No tengo registro de envíos en este proceso.\n"
+                "(El buffer se vacía al redeploy de Railway.)")
+    lineas = ["📋 Últimos envíos al cliente (más reciente primero):"]
+    for i, e in enumerate(items[:15], 1):
+        marca = "✅" if e["ok"] else "❌"
+        ts_corto = e["ts"].replace("T", " ").split(".")[0]
+        cuerpo = f" — \"{e['contenido']}\"" if e["contenido"] else ""
+        err = f" | error: {e['detalle']}" if not e["ok"] and e["detalle"] else ""
+        lineas.append(
+            f"{i}. {marca} [{ts_corto}] {e['tipo']} → +{e['phone']}{cuerpo}{err}"
+        )
+    return "\n".join(lineas)
 CMD_ENVIAR_PLANTILLA_RE = re.compile(
     r"\[CMD_ENVIAR_PLANTILLA:\s*(\+?\d+)\s*\|\s*([^|\]]+?)\s*\|\s*([^\]]+?)\s*\]",
     re.IGNORECASE,
@@ -3375,8 +3472,11 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
         try:
             ok, err = ycloud_enviar_texto(from_e164, phone_e164, cuerpo)
         except Exception as e:
+            _registrar_envio("texto", phone_norm, False,
+                             f"excepción: {type(e).__name__}: {e}", cuerpo)
             notas.append(f"❌ Error enviando a {phone_e164}: {e}")
             return ""
+        _registrar_envio("texto", phone_norm, ok, err, cuerpo)
         if ok:
             notas.append(f"✅ Enviado a {phone_e164}: \"{cuerpo[:120]}\"")
             try:
@@ -3404,14 +3504,19 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
             return ""
         from_number = BOT_PHONE or "525631832858"
         from_e164 = "+" + normalizar_numero(from_number)
+        contenido_log = f"{nombre_cliente} | {tema_pendiente}"
         try:
             ok, err = ycloud_enviar_plantilla(
                 from_e164, phone_e164,
                 params=[nombre_cliente, tema_pendiente],
             )
         except Exception as e:
+            _registrar_envio("plantilla", phone_norm, False,
+                             f"excepción: {type(e).__name__}: {e}",
+                             contenido_log)
             notas.append(f"❌ Error enviando plantilla a {phone_e164}: {e}")
             return ""
+        _registrar_envio("plantilla", phone_norm, ok, err, contenido_log)
         if ok:
             cuerpo_render = (
                 f"Hola {nombre_cliente}, aquí Eduardo de Digitaliza. "
@@ -3484,6 +3589,12 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
         return ""
 
     texto = CMD_QUITAR_ETIQUETA_RE.sub(_quitar_etiqueta, texto)
+
+    def _ultimos_envios(_m):
+        notas.append(_formato_ultimos_envios())
+        return ""
+
+    texto = CMD_ULTIMOS_ENVIOS_RE.sub(_ultimos_envios, texto)
 
     def _borrar(m):
         phone_raw = m.group(1).strip()
