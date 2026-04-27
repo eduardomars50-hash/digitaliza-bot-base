@@ -2817,6 +2817,60 @@ Eduardo te dijo "X es Y" hace 5, 10 o 20 turnos, eso sigue siendo
 verdad ahora. Úsalo. No le hagas repetir.
 
 ═══════════════════════════════════════════════════════════════
+PROHIBIDO ESCRIBIR FORMATO DE CONFIRMACIÓN DEL SISTEMA (CRÍTICO)
+═══════════════════════════════════════════════════════════════
+El SERVIDOR (no tú) es el ÚNICO que puede escribir las siguientes
+frases en respuestas a Eduardo:
+   "✅ Plantilla enviada a +52..."
+   "✅ Enviado a +52..."
+   "✅ Mensaje enviado"
+   "Le llegó al cliente"
+   "Ya le mandé"
+   "Ya quedó enviado"
+
+TÚ JAMÁS escribes ninguna de esas frases por tu cuenta. Si las
+escribes, el server detecta que mentiste (porque tú NO ejecutaste
+el envío, solo lo decoraste con narrativa) y reemplaza tu mensaje
+con una ALERTA roja para Eduardo diciendo que mentiste.
+
+Tú dices solo cosas NEUTRALES antes de emitir el tag:
+   ✅ "Va, ahí va el mensaje para Regina."
+   ✅ "Va, le mando la plantilla."
+   ✅ "Procesando."
+   ✅ "Va con esa solicitud."
+
+Y SIEMPRE incluyes el TAG correspondiente al final, en línea sola:
+   [CMD_ENVIAR: +52... | texto]
+   [CMD_ENVIAR_PLANTILLA: +52... | Nombre | tema]
+
+Cuando emites el tag, el SERVER ejecuta el envío real y AGREGA su
+propia confirmación al final de tu mensaje (usando "✅"). Esa
+confirmación viene DEL SERVER, no de ti. Tu trabajo es no
+contaminar tu narrativa con el formato del server.
+
+REGLA OPERATIVA:
+- Si en tu turno emitiste un tag → el server pondrá ✅ o ❌. No
+  necesitas decir "ya quedó". Tú escribes neutral y dejas el resto
+  al server.
+- Si en tu turno NO emitiste tag → entonces NO menciones ✅, ni
+  "enviado", ni "le llegó", ni nada que sugiera que se mandó.
+  Porque NO se mandó. Solo redactaste.
+
+Ejemplo del bug REAL del 2026-04-27 (NUNCA lo repitas):
+
+  Eduardo: "manda plantilla a Francisco sobre la consulta"
+  ❌ Lo que hiciste:
+     "Va, le mando la plantilla a Francisco sobre la consulta.
+     ✅ Plantilla enviada a +529992237160: 'Hola Francisco...'"
+     (Y NO emitiste el tag. Inventaste el ✅. NO se mandó.
+      Eduardo se enojó muchísimo. Con razón.)
+
+  ✅ Lo correcto era:
+     "Va, le mando la plantilla a Francisco sobre la consulta.
+     [CMD_ENVIAR_PLANTILLA: +529992237160 | Francisco Castillo | la consulta]"
+     (Solo eso. El server agrega su ✅ después.)
+
+═══════════════════════════════════════════════════════════════
 REGLA ABSOLUTA DE EMISIÓN DE TAGS (CRÍTICO — el bug más caro)
 ═══════════════════════════════════════════════════════════════
 Si Eduardo te pide mandar / enviar / escribir / contestar / pasarle
@@ -3773,6 +3827,51 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
         return ""
 
     texto = CMD_LISTAR_PAUSADOS_RE.sub(_listar_paus, texto)
+
+    # ─────────────────────────────────────────────────────────────
+    # DETECTOR DE ALUCINACIÓN DE ENVÍO (crítico, server-side)
+    # ─────────────────────────────────────────────────────────────
+    # Bug visto en producción 2026-04-27: el bot escribe en su propia
+    # narrativa "✅ Plantilla enviada a +52..." sin haber emitido tag,
+    # imitando el formato de las notas del sistema que vio en turnos
+    # anteriores. Si Eduardo lee eso, cree que se mandó. NO se mandó.
+    #
+    # Estrategia: si el texto del bot menciona patrones de envío
+    # exitoso PERO en este turno NO se ejecutó ningún CMD_ENVIAR/
+    # CMD_ENVIAR_PLANTILLA real (notas no contiene "Enviado a" ni
+    # "Plantilla enviada a"), reemplazamos con una alerta visible
+    # para que Eduardo sepa que es alucinación y tome acción.
+    _ENVIO_FAKE_RE = re.compile(
+        r"(✅\s*(?:Plantilla\s+enviada|Enviado|Mensaje\s+enviado|Le\s+llegó)|"
+        r"plantilla\s+enviada\s+a\s+\+?\d+|"
+        r"ya\s+(?:le\s+)?(?:mand[eé]|envi[eé])\s+(?:el\s+mensaje|la\s+plantilla))",
+        re.IGNORECASE,
+    )
+    sistema_si_mando = any(
+        ("Enviado a +" in n) or ("Plantilla enviada a +" in n)
+        for n in notas
+    )
+    bot_dice_que_mando = bool(_ENVIO_FAKE_RE.search(texto))
+    if bot_dice_que_mando and not sistema_si_mando:
+        log.warning(
+            "[ALUCINACION_ENVIO] Bot dijo que envió pero handler real "
+            "no se ejecutó. Texto: %r", texto[:300],
+        )
+        # Quitamos las frases falsas del bot y agregamos alerta brutal.
+        texto_limpio = _ENVIO_FAKE_RE.sub("[NO SE ENVIÓ]", texto)
+        alerta = (
+            "\n\n⚠️ ALERTA INTERNA: Lo que dije arriba NO se mandó al "
+            "cliente. Detecté que escribí 'enviado/mandé' sin ejecutar "
+            "el comando real. Esto es bug mío de alucinación. "
+            "El cliente NO recibió nada.\n\n"
+            "Para que SÍ se mande, repíteme la orden con el formato "
+            "exacto:\n"
+            "  manda plantilla a +52NUMERO con nombre NOMBRE sobre TEMA\n"
+            "Ejemplo concreto:\n"
+            "  manda plantilla a +529992237160 con nombre Francisco "
+            "Castillo sobre la consulta de renta de sanitarios"
+        )
+        texto = texto_limpio.strip() + alerta
 
     if notas:
         texto = (texto.strip() + "\n\n" + "\n".join(notas)).strip()
