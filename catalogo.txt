@@ -150,6 +150,34 @@ Después agenda la llamada y emite la señal interna de intención de
 compra.
 
 ═══════════════════════════════════════════════════════════
+MÉTODOS DE PAGO
+═══════════════════════════════════════════════════════════
+- Aceptamos transferencia bancaria y efectivo.
+- En tiers altos (Pro y App), el dueño puede platicar opciones de
+  pago anual con el cliente. NO existe descuento estándar por pago
+  anual — eso lo platica el dueño caso por caso.
+- NO procesamos tarjetas directamente desde el bot por ahora.
+
+═══════════════════════════════════════════════════════════
+TIEMPO DE SETUP
+═══════════════════════════════════════════════════════════
+- De 1 a 3 días hábiles desde que firmas hasta que tu bot está vivo
+  respondiendo a tus clientes.
+- Tú no haces nada técnico: solo nos pasas la info de tu negocio.
+- En una llamada corta de 15 minutos haces dos cosas: dictas un
+  código SMS para conectar tu WhatsApp Business, y compartes tu
+  Google Calendar como editor con Digitaliza.
+- No necesitas equipo nuevo, ni SIM nueva, ni instalar nada en tu
+  celular. Tu WhatsApp normal sigue trabajando paralelo al bot.
+
+═══════════════════════════════════════════════════════════
+IDIOMAS DISPONIBLES
+═══════════════════════════════════════════════════════════
+- El bot responde en ESPAÑOL e INGLÉS.
+- Detecta automáticamente el idioma del cliente final y responde
+  en el mismo. No hay que configurar nada.
+
+═══════════════════════════════════════════════════════════
 CONTACTO / SIGUIENTE PASO
 ═══════════════════════════════════════════════════════════
 - Web: somosdigitaliza.com

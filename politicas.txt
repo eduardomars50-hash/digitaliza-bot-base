@@ -1,0 +1,201 @@
+# Políticas oficiales de Digitaliza
+# Este archivo es fuente de verdad para preguntas frecuentes de prospectos.
+# El bot SOLO puede responder estos temas con la info de aquí.
+# NUNCA inventa fuera de este archivo.
+
+═══════════════════════════════════════════════════════════
+PROCESO DE INSTALACIÓN Y SETUP
+═══════════════════════════════════════════════════════════
+- Tiempo estimado: 1 a 3 días hábiles desde que el cliente firma
+  hasta que el bot está vivo respondiendo a sus clientes.
+- El cliente NO hace nada técnico. Solo nos pasa la info de su
+  negocio (precios, servicios, horarios, tono de marca) y nosotros
+  configuramos absolutamente todo.
+- Lo único que el cliente hace de su lado, en una llamada de 15
+  minutos con nosotros: conectar su WhatsApp Business (le llega
+  un código SMS, lo dicta) y compartir su Google Calendar como
+  editor con Digitaliza para que el bot pueda agendar ahí.
+- No necesita comprar equipo, no necesita una computadora nueva,
+  no necesita SIM nuevo, no necesita instalar nada en su celular.
+- No necesita darnos su contraseña de WhatsApp ni su contraseña
+  de Google. Todo se conecta vía permisos oficiales (Embedded
+  Signup de Meta y compartir de Google Calendar).
+
+═══════════════════════════════════════════════════════════
+PERMANENCIA, CANCELACIÓN Y PAGOS
+═══════════════════════════════════════════════════════════
+- NO hay permanencia mínima. El cliente puede cancelar cuando
+  quiera, sin penalización.
+- El mes en curso se cobra completo (no se prorratea). De ahí
+  en adelante ya no se cobra nada.
+- Si el cliente se atrasa con el pago de su mensualidad, el bot
+  no se apaga al instante: sigue contestando 24/7 a los clientes
+  finales mientras el cliente regulariza.
+- Métodos de pago aceptados: transferencia bancaria y efectivo.
+- En tiers altos (Pro y App) el dueño puede platicar opciones de
+  pago anual con el cliente. NO existe descuento estándar por
+  pago anual.
+- Si el cliente cancela, le entregamos toda la información que le
+  pertenece (su base de conversaciones, leads capturados, etc.)
+  en el formato que le acomode.
+
+═══════════════════════════════════════════════════════════
+SOPORTE Y RESPUESTA A FALLAS
+═══════════════════════════════════════════════════════════
+- El BOT está disponible 24/7. Nunca duerme.
+- El soporte HUMANO (Eduardo y equipo) atiende casos urgentes
+  aproximadamente Lunes a Sábado, 9:00 a 21:00. Domingos puede
+  variar — por mensaje siempre se coordina.
+- En los primeros 15 días desde que el bot está vivo: cualquier
+  bug, error o falla se arregla GRATIS. Es nuestra ventana de
+  estabilización.
+- Después de los 15 días: los bugs se siguen arreglando sin
+  costo adicional (forman parte del servicio mensual). Lo que SÍ
+  tiene costo extra son funcionalidades nuevas o automatizaciones
+  adicionales que el cliente quiera agregar — eso se platica con
+  el dueño y se cotiza aparte.
+- Si el bot se cae por completo (caso muy raro): el sistema
+  alerta automáticamente a Eduardo, redeploya solo, y el cliente
+  recibe aviso por WhatsApp si la caída se extiende.
+- Si el bot se equivoca con una cita o responde mal a un cliente
+  final: Eduardo (o el cliente, desde el handover) lo arregla
+  manualmente y el bot aprende del ajuste para no repetirlo.
+
+═══════════════════════════════════════════════════════════
+HANDOVER BOT ↔ HUMANO (TÚ TIENES EL CONTROL TOTAL)
+═══════════════════════════════════════════════════════════
+- El cliente SIEMPRE puede tomar el control de cualquier
+  conversación. No es "todo bot o nada".
+- Dos formas de hacerlo:
+  1) Si el cliente abre la app de WhatsApp Business y le contesta
+     manual a un cliente final, el bot detecta automáticamente
+     que tomó el control y se pausa con ese cliente por 30 min.
+     Le llega aviso a Eduardo (y al cliente del bot) por WhatsApp.
+  2) Si el cliente le manda mensaje al bot tipo "pausa a Regina"
+     o "yo sigo con +52999...", el bot se pausa con ese contacto.
+- El cliente puede pausar y retomar cuando quiera. Es una de las
+  ventajas más fuertes del producto.
+
+═══════════════════════════════════════════════════════════
+NOTIFICACIONES AUTOMÁTICAS AL DUEÑO
+═══════════════════════════════════════════════════════════
+El sistema avisa al dueño por WhatsApp cuando:
+- Entra un nuevo prospecto.
+- Un prospecto deja sus datos (lead capturado).
+- Un prospecto agenda llamada o cita.
+- Un prospecto dice que quiere contratar.
+- El bot detecta que el dueño tomó el control manual.
+- Hay 3 fallas seguidas de la IA (alerta crítica).
+
+═══════════════════════════════════════════════════════════
+QUÉ HACE EL BOT CUANDO NO SABE ALGO
+═══════════════════════════════════════════════════════════
+- Si un cliente final hace una pregunta que el bot no tiene en
+  su base, el bot dice algo como "déjame consultarlo con el
+  equipo y te respondo pronto" y escala internamente al dueño.
+- El bot NUNCA inventa precios, servicios ni datos. Si no lo
+  sabe, escala. Esa es regla dura.
+- Si un cliente final insulta o se enoja, el bot mantiene tono
+  profesional, no entra a discusión, y si hace falta escala.
+
+═══════════════════════════════════════════════════════════
+PRIVACIDAD Y MANEJO DE DATOS
+═══════════════════════════════════════════════════════════
+- Las conversaciones de los clientes finales están encriptadas
+  en tránsito (TLS) y en reposo (AES-256).
+- Solo accedemos a las conversaciones cuando el cliente nos pide
+  soporte o si hay un bug que arreglar. NUNCA las compartimos
+  con nadie y NUNCA las usamos para entrenar modelos.
+- Cumplimos con la Ley Federal de Protección de Datos
+  Personales en Posesión de los Particulares (LFPDPPP).
+- Cada cliente tiene su propio Aviso de Privacidad firmado.
+- Si el cliente cancela, su data se exporta y se le entrega.
+
+═══════════════════════════════════════════════════════════
+QUÉ MANEJA Y QUÉ NO MANEJA EL BOT
+═══════════════════════════════════════════════════════════
+SÍ maneja:
+- Atender clientes 24/7 en WhatsApp.
+- Texto, notas de voz, imágenes, PDFs y videos.
+- Agenda en Google Calendar (Tier Estándar y arriba).
+- Recordatorios automáticos a clientes finales.
+- Captura de leads y notificación al dueño.
+- Conversaciones simultáneas con múltiples clientes finales
+  al mismo tiempo (no hay límite práctico de paralelismo).
+- Idiomas: español E inglés. Si un cliente final escribe en
+  inglés, el bot responde en inglés. Si escribe en español,
+  responde en español.
+
+NO maneja (por ahora):
+- Instagram. El bot SOLO funciona en WhatsApp. Instagram está
+  en roadmap pero no disponible aún.
+- Cobros directos. El bot puede mandar links de pago si se le
+  configuran, pero no procesa tarjetas él mismo.
+- Lista de espera automática. Si un día está lleno en el
+  calendario, el bot ofrece otros días libres en su lugar.
+  No mete al cliente en una "cola" para avisarle si se libera.
+- Dos sucursales con UN SOLO bot. Si el cliente tiene dos
+  locales con calendarios y números diferentes, recomendamos
+  un bot por sucursal (cada uno con su propio número y agenda).
+  Si las dos sucursales comparten número y calendario, sí cabe
+  en un solo bot.
+
+═══════════════════════════════════════════════════════════
+QUIÉNES SOMOS
+═══════════════════════════════════════════════════════════
+- Digitaliza es una agencia de automatización con IA fundada
+  a finales de febrero de 2026 en Mérida, Yucatán.
+- Somos 3 personas jóvenes, ambiciosas, dedicadas a este
+  proyecto.
+- Operamos remoto. Las llamadas de venta son por Google Meet
+  o Zoom (o presencial si el prospecto está en Mérida).
+- Por confidencialidad, no compartimos nombres específicos de
+  clientes actuales. Trabajamos con varios negocios locales
+  (salones, barberías, consultorios, veterinarias).
+
+═══════════════════════════════════════════════════════════
+CÓMO RESPONDER OBJECIONES TÍPICAS
+═══════════════════════════════════════════════════════════
+
+OBJECIÓN: "¿Por qué no mejor contrato a alguien que conteste?"
+RESPUESTA BASE: Una recepcionista cuesta $8-15K al mes mínimo,
+descansa, se enferma, no contesta a las 11 de la noche, y
+tarda en aprender. El bot está activo 24/7, contesta al
+instante, no se cansa, y cuesta una fracción. Y si quieres
+contestar tú mismo cuando sea, lo haces — el bot se pausa
+solo con ese cliente y tú tomas el control.
+
+OBJECIÓN: "Ya tengo recepcionista, ¿para qué quiero esto?"
+RESPUESTA BASE: Tu recepcionista trabaja en horario, el bot
+trabaja fuera de horario. La mayoría de los clientes te
+escriben fuera de horario laboral — esos los pierdes hoy. El
+bot los atiende, los califica y agenda, y tu recepcionista
+los recibe ya tibios al día siguiente.
+
+OBJECIÓN: "¿En qué es diferente a usar ChatGPT?"
+RESPUESTA BASE: ChatGPT es genérico — no sabe tus precios, no
+agenda en tu calendario, no conoce tus servicios, no escala
+contigo cuando hay un cliente caliente, y no te avisa cuando
+entra un lead. Nuestro bot es un sistema completo
+personalizado a tu negocio: agenda real, captura de leads,
+alertas a tu WhatsApp, soporte humano detrás.
+
+OBJECIÓN: "He visto otros bots más baratos."
+RESPUESTA BASE: Hay opciones más baratas, sí. La diferencia
+está en que nosotros sí entendemos tu negocio antes de
+configurar (no es plantilla genérica), te lo personalizamos a
+tu tono, lo monitoreamos, y si algo no jala, te respondemos
+en el día. No es solo software, es servicio detrás. Por eso
+está en lanzamiento — para validar que vale el doble que un
+bot genérico.
+
+OBJECIÓN: "Está caro."
+RESPUESTA BASE: Recordar precio de lanzamiento, sugerir tier
+más bajo si aplica. Si insiste, escalar al asesor humano para
+platicar opciones. El bot NO compromete descuentos por sí solo.
+
+OBJECIÓN: "¿Y si mis clientes prefieren hablar con una persona?"
+RESPUESTA BASE: Para eso está el handover. Tú tomas el control
+cuando quieras. El bot no reemplaza a la persona — la
+amplifica. La persona contesta cuando vale la pena, el bot
+contesta el resto.

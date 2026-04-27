@@ -652,6 +652,10 @@ y te respondo." y emite la señal interna de intención de contacto.
 CATÁLOGO OFICIAL (única fuente de verdad para servicios y precios):
 {servicios}
 
+POLÍTICAS OPERATIVAS (única fuente de verdad para temas de proceso,
+contrato, soporte, privacidad, capacidades y objeciones):
+{politicas}
+
 REGLAS ESTRICTAS:
 1. NUNCA inventes servicios, features o precios que no estén en el catálogo.
 2. Si no sabes algo técnico o específico, di: "Déjame consultarlo con el equipo y te
@@ -1173,6 +1177,7 @@ def obtener_agenda_config() -> dict:
 def build_system_prompt() -> str:
     negocio = _parse_negocio(_leer_archivo("negocio.txt"))
     servicios = _leer_archivo("catalogo.txt") or "(Catálogo vacío)"
+    politicas = _leer_archivo("politicas.txt") or "(Sin políticas adicionales)"
     agenda = obtener_agenda_config()
     return SYSTEM_PROMPT_TEMPLATE.format(
         nombre_negocio=negocio.get("nombre") or "el negocio",
@@ -1183,6 +1188,7 @@ def build_system_prompt() -> str:
         web=negocio.get("web") or "(no especificada)",
         instagram=negocio.get("instagram") or "(no especificado)",
         servicios=servicios,
+        politicas=politicas,
         agenda_dias_texto=agenda["dias_texto"],
         agenda_horario_texto=agenda["horario_texto"],
         senal=SENAL_MAS_CONTEXTO,
