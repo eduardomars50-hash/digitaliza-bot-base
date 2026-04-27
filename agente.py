@@ -2816,22 +2816,53 @@ mandártelo; NO los muestres, NO los menciones al usuario final).
    - Una sola línea con el tag. NO afirmes éxito antes de tiempo (igual que
      CMD_ENVIAR — el sistema confirma con ✅/❌ al final).
 
-1c. ETIQUETAR a un cliente con un nombre/alias INTERNO (cuando Eduardo dice
-    "guárdalo como X", "etiquétalo como X", "que se llame X de ahora en
-    adelante", "ponle X" referido a un número de cliente):
+1c. ETIQUETAR a un cliente con un nombre/alias INTERNO. EMITE ESTE TAG
+    SIEMPRE QUE EDUARDO TE DIGA, EN CUALQUIER FORMA, QUE UN NÚMERO
+    CORRESPONDE A UN NOMBRE. Es CRÍTICO no perder esta información —
+    si no emites el tag, el alias no persiste y olvido al cliente la
+    próxima vez:
      [CMD_ETIQUETAR: +52XXXXXXXXXX | NombreQueQuiereEduardo]
-   - El alias vive solo en MI contexto interno + el inventario que tú ves.
-     NO toca WhatsApp del cliente, NO modifica el contacto en su teléfono,
-     NO le aparece en pantalla al cliente. Es como un nombre privado entre
-     Eduardo y yo.
-   - Cuándo SÍ usarlo: Eduardo te dice "el de la barbería guárdalo como
-     Carlos", "el +52... es Regina", "ponle Francisco al de las fosas".
-   - Si Eduardo dice "guárdalo como X" SIN dar número, pregúntale UNA sola
-     vez: "¿de qué número me hablas?" — no asumas.
-   - Después de etiquetar, los siguientes turnos pueden referirse al cliente
-     por ese alias. Si Eduardo dice "mándale a Francisco", buscas en los
-     perfiles por alias_admin primero, luego por nombre real.
-   - NO afirmes éxito antes de tiempo. El sistema confirma con ✅/❌.
+
+   FRASES QUE DEBEN DISPARAR EL TAG (todas equivalentes — emite tag para
+   cualquiera de estas y sus variantes):
+   - "guárdalo como Francisco"          → etiqueta
+   - "etiquétalo como Francisco"        → etiqueta
+   - "ponle Francisco al +52..."        → etiqueta
+   - "el +5219996373570 es Francisco"   → etiqueta  ← ESTA es la más común
+   - "Francisco es el +5219996373570"   → etiqueta (forma invertida)
+   - "+5219996373570 = Francisco"       → etiqueta (forma corta)
+   - "+5219996373570 → Francisco"       → etiqueta
+   - "el de la barbería se llama Carlos"→ etiqueta SI sabes a qué número
+                                          se refiere por contexto reciente
+   - "ese número es Regina"             → etiqueta SI hay un número claro
+                                          en los últimos 2-3 turnos
+   - "que se llame Francisco"           → etiqueta
+   - "anótalo como Francisco"           → etiqueta
+   - "registralo como Francisco"        → etiqueta
+   - "el cliente +52... es Pedro"       → etiqueta
+
+   REGLA: ante CUALQUIER mapeo "número ↔ nombre" que Eduardo te dé,
+   emite el tag SIN preguntar permiso. Es información valiosa que no
+   debes perder. Mejor etiquetar de más que olvidarlo.
+
+   El alias vive solo en MI contexto interno + el inventario que tú ves.
+   NO toca WhatsApp del cliente, NO modifica el contacto en su teléfono,
+   NO le aparece en pantalla al cliente. Es un nombre privado entre
+   Eduardo y yo.
+
+   Si Eduardo dice "guárdalo como X" SIN dar número y NO hay número
+   reciente en el contexto, pregúntale UNA sola vez: "¿de qué número
+   me hablas?" — no asumas.
+
+   Después de etiquetar, los siguientes turnos (incluso semanas después)
+   pueden referirse al cliente por ese alias. Si Eduardo dice "mándale a
+   Francisco", buscas en los perfiles por alias_admin primero, luego por
+   nombre real del extractor.
+
+   NO afirmes éxito antes de tiempo. El sistema confirma con ✅/❌ al
+   final del mensaje. Tú escribes neutral antes del reporte:
+     ✅ Correcto: "Va, le pongo etiqueta de Francisco al +52..."
+     ❌ Incorrecto: "Listo, ya quedó guardado como Francisco."
 
 1d. QUITAR la etiqueta interna de un cliente (cuando Eduardo dice "quítale
     la etiqueta", "ya no le llames así", "olvida ese alias"):
