@@ -108,6 +108,31 @@ _JAILBREAK_PATTERNS = re.compile(
 SECURITY_LOG_PATH = DATA_DIR / "security_logs.json"
 
 
+def _commit_hash_actual() -> str:
+    """Devuelve el hash corto del commit que está corriendo. Se intenta
+    leer en arranque (Railway clona el repo) y se cachea. Sirve para que
+    Eduardo vea en cada respuesta admin qué versión está procesando — si
+    no es la última, sabe que aún no se desplegó."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+            cwd=str(Path(__file__).parent),
+        )
+        if result.returncode == 0:
+            return result.stdout.strip() or "unknown"
+    except Exception:
+        pass
+    return "unknown"
+
+
+# Cacheado al arranque del proceso. Si Railway redeploya, el proceso
+# nuevo lee el hash nuevo. Si Eduardo ve un hash viejo en las respuestas,
+# sabe que su deploy aún no aplicó.
+_COMMIT_HASH = _commit_hash_actual()
+
+
 def normalizar_numero(numero: str) -> str:
     """Normaliza un número de WhatsApp a solo dígitos.
 
@@ -2817,6 +2842,23 @@ Eduardo te dijo "X es Y" hace 5, 10 o 20 turnos, eso sigue siendo
 verdad ahora. Úsalo. No le hagas repetir.
 
 ═══════════════════════════════════════════════════════════════
+FOOTER DE DEBUG AL FINAL DE CADA RESPUESTA (NUNCA LO IMITES)
+═══════════════════════════════════════════════════════════════
+El servidor agrega automáticamente al FINAL de tu respuesta a Eduardo
+un footer del tipo:
+   — [v: 0f348d1 · envíos: 0t/0p · etiquetas: 0 · errores: 0]
+
+Ese footer lo pone EL SERVER, no tú. NUNCA lo imites en tu narrativa.
+NUNCA escribas algo similar arriba pretendiendo que es el reporte real.
+Si tú escribes "0t/0p" o un commit hash o "envíos: 1", el server detecta
+duplicación y la marca como falsa.
+
+Eduardo usa ese footer para verificar la verdad. Si el footer dice
+"envíos: 0t/0p" significa que NO se mandó NADA al cliente este turno —
+sin importar lo que tú hayas escrito arriba. Por eso TÚ no debes
+escribir confirmaciones falsas: el footer te delata siempre.
+
+═══════════════════════════════════════════════════════════════
 PROHIBIDO ESCRIBIR FORMATO DE CONFIRMACIÓN DEL SISTEMA (CRÍTICO)
 ═══════════════════════════════════════════════════════════════
 El SERVIDOR (no tú) es el ÚNICO que puede escribir las siguientes
@@ -3875,6 +3917,23 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
 
     if notas:
         texto = (texto.strip() + "\n\n" + "\n".join(notas)).strip()
+
+    # Footer de debug: deja constancia VERIFICABLE de qué hizo el server
+    # en este turno. Si el bot dice "✅ enviado" pero el footer muestra
+    # 0 envíos, Eduardo sabe que mintió. Si el commit no es el último,
+    # Eduardo sabe que el deploy aún no aplicó.
+    n_envios_texto = sum(1 for n in notas if "Enviado a +" in n)
+    n_envios_plant = sum(1 for n in notas if "Plantilla enviada a +" in n)
+    n_etiquetas = sum(1 for n in notas if "etiquetado como" in n)
+    n_errores = sum(1 for n in notas if n.startswith("❌"))
+    footer = (
+        f"\n\n— [v: {_COMMIT_HASH} · "
+        f"envíos: {n_envios_texto}t/{n_envios_plant}p · "
+        f"etiquetas: {n_etiquetas} · "
+        f"errores: {n_errores}]"
+    )
+    texto = texto.strip() + footer
+
     return texto.strip(), ver
 
 
