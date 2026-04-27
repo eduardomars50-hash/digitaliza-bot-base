@@ -2770,6 +2770,53 @@ COMANDOS QUE PUEDES EMITIR (el bot los ejecuta y elimina del mensaje antes de
 mandártelo; NO los muestres, NO los menciones al usuario final).
 
 ═══════════════════════════════════════════════════════════════
+RESOLUCIÓN DE CLIENTE POR NOMBRE/ALIAS (CRÍTICO)
+═══════════════════════════════════════════════════════════════
+Cuando Eduardo te pide "mándale a [nombre]", "escríbele a [alias]",
+"contesta a [nombre]" — y NO encuentras a esa persona en el inventario
+(ni por alias_admin ni por nombre del extractor) — ANTES de preguntarle
+otra vez de quién hablas, REVISA tu historial reciente con Eduardo.
+
+Eduardo MUY frecuentemente te dice en un turno previo cosas como:
+   "el +52... es Francisco" (mapeo número↔nombre)
+   "el de la barbería es Carlos"
+   "el +52... es de Renta de sanitarios y Limpieza de fosas"
+... y en un turno POSTERIOR te pide "mándale a Francisco". Si el
+mapeo está en tu historial, NO se lo preguntes otra vez como pendejo.
+
+Procedimiento correcto en este caso:
+1. Detectas que pidió mandar a alguien por nombre.
+2. No lo encuentras en archivos.
+3. Buscas en tu historial admin reciente (últimos 30 mensajes)
+   un mapeo número↔ese nombre.
+4. Si encuentras: emite DOS tags en el mismo turno, en líneas
+   separadas al final:
+      [CMD_ETIQUETAR: +52NUMERO | NombreQueDijoEduardo]
+      [CMD_ENVIAR_PLANTILLA: +52NUMERO | NombreQueDijoEduardo | tema breve]
+   El primero graba el alias para futuras consultas. El segundo manda.
+5. Si NO encuentras NADA en historial, ENTONCES sí pregunta:
+   "¿qué número es de [nombre]?"
+
+Ejemplo correcto (lo que DEBÍ hacer ayer):
+
+  HISTORIAL TURNO -3 (Eduardo): "el +529992237160 es de Renta de sanitarios"
+  HISTORIAL TURNO -2 (Eduardo): "guárdalo como Francisco Castillo"
+  TURNO ACTUAL (Eduardo): "Mándale plantilla a Francisco"
+
+  ✅ Tu respuesta correcta:
+     "Va, le mando a Francisco la plantilla de seguimiento.
+     [CMD_ETIQUETAR: +529992237160 | Francisco Castillo]
+     [CMD_ENVIAR_PLANTILLA: +529992237160 | Francisco Castillo | la app a la medida para tu negocio de Renta de sanitarios]"
+
+  ❌ Lo que hiciste mal:
+     "No tengo a nadie guardado como Francisco, ¿de qué número me hablas?"
+     (CONOCÍAS el mapeo en tu historial pero no lo conectaste.)
+
+REGLA: tu historial admin es información VÁLIDA y AUTORITATIVA. Si
+Eduardo te dijo "X es Y" hace 5, 10 o 20 turnos, eso sigue siendo
+verdad ahora. Úsalo. No le hagas repetir.
+
+═══════════════════════════════════════════════════════════════
 REGLA ABSOLUTA DE EMISIÓN DE TAGS (CRÍTICO — el bug más caro)
 ═══════════════════════════════════════════════════════════════
 Si Eduardo te pide mandar / enviar / escribir / contestar / pasarle
@@ -3391,12 +3438,18 @@ def _buscar_phone_por_alias_o_nombre(query: str) -> str | None:
 
 
 def _inventario_prospectos() -> str:
+    """Lista TODOS los clientes que conozco: con conversación, con perfil
+    huérfano (etiquetado pero sin haber escrito al bot), o ambos."""
+    phones_vistos: set[str] = set()
     lineas = []
+
+    # 1) Clientes con conversación (orden cronológico inverso por archivo).
     for f in sorted(CONVERSACIONES_DIR.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             continue
+        phones_vistos.add(f.stem)
         n = len(data)
         ultimo_ts = data[-1].get("ts", "") if data else ""
         ultimo_u = next((m["content"][:80] for m in reversed(data) if m["role"] == "user"), "")
@@ -3407,14 +3460,41 @@ def _inventario_prospectos() -> str:
         tipo = perfil.get("tipo_negocio", "?")
         ciudad = perfil.get("ciudad", "?")
         interes = perfil.get("interes", "?")
-        # Si Eduardo le puso alias, lo destacamos primero. El nombre real
-        # del extractor se conserva como referencia secundaria.
         etiqueta = f"alias={alias} | " if alias else ""
         lineas.append(
             f"- {f.stem} | {etiqueta}nombre={nombre} | negocio={negocio} | tipo={tipo} | "
             f"ciudad={ciudad} | interés={interes} | {n} msgs | último: {ultimo_ts} | "
             f"último_user: {ultimo_u!r}"
         )
+
+    # 2) Perfiles huérfanos: clientes con alias o info pero SIN conversación
+    #    aún (Eduardo los etiquetó manualmente antes de que escribieran al
+    #    bot). Los listamos abajo, marcados claramente.
+    huerfanos = []
+    for f in sorted(PERFILES_DIR.glob("*.json")):
+        if f.stem in phones_vistos:
+            continue
+        try:
+            perfil = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        alias = (perfil.get("alias_admin") or "").strip()
+        nombre = perfil.get("nombre", "")
+        # Solo listamos huérfanos que tengan alias o nombre conocido —
+        # los completamente vacíos son ruido.
+        if not (alias or (nombre and nombre != "desconocido")):
+            continue
+        etiqueta = f"alias={alias} | " if alias else ""
+        nombre_show = nombre or "?"
+        huerfanos.append(
+            f"- {f.stem} | {etiqueta}nombre={nombre_show} | "
+            f"(SIN conversación con el bot todavía)"
+        )
+
+    if huerfanos:
+        lineas.append("")
+        lineas.append("CLIENTES ETIQUETADOS PERO SIN HABER ESCRITO AL BOT:")
+        lineas.extend(huerfanos)
 
     leads = []
     for f in sorted(LEADS_DIR.glob("*.json")):
