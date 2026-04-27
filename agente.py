@@ -109,10 +109,23 @@ SECURITY_LOG_PATH = DATA_DIR / "security_logs.json"
 
 
 def _commit_hash_actual() -> str:
-    """Devuelve el hash corto del commit que está corriendo. Se intenta
-    leer en arranque (Railway clona el repo) y se cachea. Sirve para que
-    Eduardo vea en cada respuesta admin qué versión está procesando — si
-    no es la última, sabe que aún no se desplegó."""
+    """Devuelve el hash corto del commit que está corriendo. Se cachea al
+    arranque del proceso. Si Eduardo ve un hash viejo en las respuestas,
+    sabe que su deploy aún no aplicó.
+
+    Orden de búsqueda:
+    1) RAILWAY_GIT_COMMIT_SHA (Railway lo inyecta automáticamente).
+    2) RENDER_GIT_COMMIT (otros hosts).
+    3) subprocess `git rev-parse` (sirve en local).
+    4) "unknown" si nada funciona.
+    """
+    sha = (
+        os.environ.get("RAILWAY_GIT_COMMIT_SHA", "")
+        or os.environ.get("RENDER_GIT_COMMIT", "")
+        or os.environ.get("GIT_COMMIT", "")
+    )
+    if sha:
+        return sha[:7]
     try:
         import subprocess
         result = subprocess.run(
