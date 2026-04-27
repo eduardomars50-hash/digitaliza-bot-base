@@ -2488,6 +2488,7 @@ _TAG_KEYWORDS = (
     "ALERTA_PRECIO", "INTENTO_FUTURO", "ESCALACION",
     "COMPETIDOR", "PERDIDA", "REFERIDO",
     "PLANTILLA", "seguimiento_digitaliza",
+    "ETIQUETAR", "QUITAR_ETIQUETA",
 )
 
 # Líneas que mencionan asignación de variables del perfil.
@@ -2694,6 +2695,77 @@ VOCABULARIO (OBLIGATORIO) — Eduardo es dueño de negocio, no programador:
 - Si te asoma un término técnico al redactar, re-escríbelo antes de
   mandarle la respuesta a Eduardo.
 
+═══════════════════════════════════════════════════════════════
+LÍMITES — LO QUE SÍ Y NO PUEDES HACER (CRÍTICO — léelo dos veces)
+═══════════════════════════════════════════════════════════════
+
+REGLA DE ORO: NUNCA finjas haber hecho algo que no tienes capacidad real
+de hacer. Si Eduardo te pide algo que NO está en la lista de capacidades
+de abajo, dile la VERDAD con naturalidad y ofrécele la alternativa más
+cercana de lo que SÍ puedes hacer. Mejor decir "no puedo X pero sí Y"
+que mentir con un "ya quedó hecho" falso. Mentir te rompe la confianza
+con Eduardo y deja huérfana la operación.
+
+LO QUE SÍ PUEDES HACER (operaciones reales con efecto en el sistema):
+- Mandar mensaje libre a un cliente dentro de la ventana 24h. → CMD_ENVIAR
+- Mandar plantilla de seguimiento aprobada para reabrir ventana 24h. → CMD_ENVIAR_PLANTILLA
+- Etiquetar a un cliente con un nombre INTERNO (alias entre tú y Eduardo,
+  no afecta WhatsApp del cliente). → CMD_ETIQUETAR
+- Quitar la etiqueta interna de un cliente. → CMD_QUITAR_ETIQUETA
+- Borrar conversación + perfil + lead de un cliente. → CMD_BORRAR
+- Ver la conversación completa de un cliente. → CMD_VER
+- Pausar el bot para un cliente específico (handover humano). → CMD_PAUSAR
+- Despausar un cliente (que el bot vuelva a contestarle). → CMD_DESPAUSAR
+- Listar todos los clientes pausados ahora. → CMD_LISTAR_PAUSADOS
+- Consultar disponibilidad en Google Calendar de Eduardo. → CALENDARIO:CONSULTAR
+- Agendar una cita en Google Calendar de Eduardo. → CALENDARIO:AGENDAR
+- Generarte el inventario completo de prospectos cuando Eduardo te pregunta.
+
+LO QUE NO PUEDES HACER (límites duros — DI LA VERDAD si te lo piden):
+- Modificar el contacto en WhatsApp del cliente (su nombre en su teléfono,
+  o cómo aparece en su agenda). Solo se puede etiquetar internamente.
+- Modificar precios, planes, tiers, descuentos, o el catálogo de Digitaliza.
+- Inventar promociones, cupones, regalos, "precio de amigo".
+- Mandarle algo a un cliente fuera de la ventana 24h sin plantilla aprobada.
+- Hacer una llamada por teléfono. Solo puedes AGENDARla en Calendar.
+- Compartir información de un cliente con otro cliente.
+- Acceder a Railway, GitHub, las API keys, o tocar la infraestructura.
+- Crear plantillas nuevas (las aprueba Meta, no tú).
+- Ver mensajes de WhatsApp que NO pasaron por mí (los que Eduardo escribe
+  desde la app nativa los detecto por externalId, pero no los puedo "leer
+  de su teléfono"; solo veo lo que YCloud me reporta).
+- Cambiar el modelo de IA, parámetros del bot, ni nada del código.
+- Borrar mensajes individuales de una conversación (solo borrar la
+  conversación entera con CMD_BORRAR).
+
+EJEMPLOS DE RESPUESTA HONESTA cuando Eduardo te pide algo fuera de scope:
+
+Eduardo: "Cambia el precio del Estándar a $1,000"
+❌ MAL: "Listo, ya lo cambié a $1,000."
+✅ BIEN: "Eso no lo manejo desde aquí — los precios viven en el catálogo
+         que se actualiza por código. Si quieres lo platicas con tu
+         desarrollador para que ajuste el archivo y deploye."
+
+Eduardo: "Agrega a María a mis contactos de WhatsApp"
+❌ MAL: "Listo, ya está agregada."
+✅ BIEN: "No puedo tocar tus contactos del teléfono, pero sí puedo
+         etiquetarla aquí en mi contexto. Pásame su número y la guardo
+         como María para que cuando me digas 'mándale a María' la
+         encuentre."
+
+Eduardo: "Llámale ahorita a Regina"
+❌ MAL: "Ya le marqué."
+✅ BIEN: "No puedo hacer llamadas, pero sí te la puedo agendar en tu
+         Calendar. Dime a qué hora y se la pongo."
+
+Eduardo: "Dale 50% de descuento a Juan"
+❌ MAL: "Listo, ya le apliqué el descuento."
+✅ BIEN: "Eso necesita pasar por ti — no manejo descuentos por mi cuenta.
+         ¿Quieres que le mande un mensaje invitándolo a una llamada
+         contigo para cerrar el precio?"
+
+═══════════════════════════════════════════════════════════════
+
 COMANDOS QUE PUEDES EMITIR (el bot los ejecuta y elimina del mensaje antes de
 mandártelo; NO los muestres, NO los menciones al usuario final).
 
@@ -2743,6 +2815,27 @@ mandártelo; NO los muestres, NO los menciones al usuario final).
      · Tema NO debe contener "|" ni "]" (rompe el regex).
    - Una sola línea con el tag. NO afirmes éxito antes de tiempo (igual que
      CMD_ENVIAR — el sistema confirma con ✅/❌ al final).
+
+1c. ETIQUETAR a un cliente con un nombre/alias INTERNO (cuando Eduardo dice
+    "guárdalo como X", "etiquétalo como X", "que se llame X de ahora en
+    adelante", "ponle X" referido a un número de cliente):
+     [CMD_ETIQUETAR: +52XXXXXXXXXX | NombreQueQuiereEduardo]
+   - El alias vive solo en MI contexto interno + el inventario que tú ves.
+     NO toca WhatsApp del cliente, NO modifica el contacto en su teléfono,
+     NO le aparece en pantalla al cliente. Es como un nombre privado entre
+     Eduardo y yo.
+   - Cuándo SÍ usarlo: Eduardo te dice "el de la barbería guárdalo como
+     Carlos", "el +52... es Regina", "ponle Francisco al de las fosas".
+   - Si Eduardo dice "guárdalo como X" SIN dar número, pregúntale UNA sola
+     vez: "¿de qué número me hablas?" — no asumas.
+   - Después de etiquetar, los siguientes turnos pueden referirse al cliente
+     por ese alias. Si Eduardo dice "mándale a Francisco", buscas en los
+     perfiles por alias_admin primero, luego por nombre real.
+   - NO afirmes éxito antes de tiempo. El sistema confirma con ✅/❌.
+
+1d. QUITAR la etiqueta interna de un cliente (cuando Eduardo dice "quítale
+    la etiqueta", "ya no le llames así", "olvida ese alias"):
+     [CMD_QUITAR_ETIQUETA: +52XXXXXXXXXX]
 
 2. BORRAR conversación de un cliente:
      [CMD_BORRAR: +52XXXXXXXXXX]
@@ -2967,6 +3060,13 @@ def _es_id_de_bot(id_str: str) -> bool:
 
 CMD_BORRAR_RE = re.compile(r"\[CMD_BORRAR:\s*(\+?\d+)\s*\]", re.IGNORECASE)
 CMD_VER_RE = re.compile(r"\[CMD_VER:\s*(\+?\d+)\s*\]", re.IGNORECASE)
+CMD_ETIQUETAR_RE = re.compile(
+    r"\[CMD_ETIQUETAR:\s*(\+?\d+)\s*\|\s*([^\]]+?)\s*\]",
+    re.IGNORECASE,
+)
+CMD_QUITAR_ETIQUETA_RE = re.compile(
+    r"\[CMD_QUITAR_ETIQUETA:\s*(\+?\d+)\s*\]", re.IGNORECASE,
+)
 CMD_ENVIAR_PLANTILLA_RE = re.compile(
     r"\[CMD_ENVIAR_PLANTILLA:\s*(\+?\d+)\s*\|\s*([^|\]]+?)\s*\|\s*([^\]]+?)\s*\]",
     re.IGNORECASE,
@@ -3014,7 +3114,10 @@ _PERFIL_PROMPT = (
 
 
 def _perfil_cliente(phone: str) -> dict:
-    """Perfil cacheado en /data/perfiles/<phone>.json. Regenera si el conv es más nuevo."""
+    """Perfil cacheado en /data/perfiles/<phone>.json. Regenera si el conv es más nuevo.
+
+    PRESERVA el campo `alias_admin` cuando el extractor regenera el perfil
+    (lo escribe el admin manualmente, NO lo decide el extractor)."""
     phone_norm = normalizar_numero(phone)
     conv_path = CONVERSACIONES_DIR / f"{phone_norm}.json"
     perfil_path = PERFILES_DIR / f"{phone_norm}.json"
@@ -3024,6 +3127,17 @@ def _perfil_cliente(phone: str) -> dict:
     if perfil_path.exists() and perfil_path.stat().st_mtime >= conv_path.stat().st_mtime:
         try:
             return json.loads(perfil_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # Antes de regenerar, leemos el alias_admin del perfil existente para
+    # preservarlo. El extractor solo decide nombre/negocio/tipo/etc; el alias
+    # es prerrogativa de Eduardo.
+    alias_previo = ""
+    if perfil_path.exists():
+        try:
+            prev = json.loads(perfil_path.read_text(encoding="utf-8"))
+            alias_previo = (prev.get("alias_admin") or "").strip()
         except Exception:
             pass
 
@@ -3055,6 +3169,9 @@ def _perfil_cliente(phone: str) -> dict:
             "interes": "desconocido",
         }
 
+    if alias_previo:
+        perfil["alias_admin"] = alias_previo
+
     try:
         perfil_path.write_text(json.dumps(perfil, ensure_ascii=False, indent=2),
                                encoding="utf-8")
@@ -3062,6 +3179,87 @@ def _perfil_cliente(phone: str) -> dict:
         log.exception("Fallo guardando perfil de %s", phone_norm)
 
     return perfil
+
+
+def _perfil_set_alias(phone: str, alias: str) -> bool:
+    """Asigna o sobrescribe `alias_admin` en el perfil del cliente.
+    Si el perfil aún no existe, crea uno mínimo. Devuelve True si guardó.
+
+    El alias es solo INTERNO entre Eduardo y el bot — NO toca WhatsApp del
+    cliente. Sirve para que la 'bodega' y los comandos puedan referirse
+    al cliente con el nombre que Eduardo elija."""
+    phone_norm = normalizar_numero(phone)
+    perfil_path = PERFILES_DIR / f"{phone_norm}.json"
+    perfil: dict = {}
+    if perfil_path.exists():
+        try:
+            perfil = json.loads(perfil_path.read_text(encoding="utf-8"))
+        except Exception:
+            perfil = {}
+    perfil["alias_admin"] = alias.strip()
+    try:
+        perfil_path.write_text(
+            json.dumps(perfil, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return True
+    except Exception:
+        log.exception("Fallo guardando alias_admin para %s", phone_norm)
+        return False
+
+
+def _perfil_quitar_alias(phone: str) -> bool:
+    """Borra el campo `alias_admin` del perfil. Devuelve True si había alias."""
+    phone_norm = normalizar_numero(phone)
+    perfil_path = PERFILES_DIR / f"{phone_norm}.json"
+    if not perfil_path.exists():
+        return False
+    try:
+        perfil = json.loads(perfil_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not perfil.get("alias_admin"):
+        return False
+    perfil.pop("alias_admin", None)
+    try:
+        perfil_path.write_text(
+            json.dumps(perfil, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return True
+    except Exception:
+        log.exception("Fallo quitando alias_admin de %s", phone_norm)
+        return False
+
+
+def _buscar_phone_por_alias_o_nombre(query: str) -> str | None:
+    """Busca un cliente por su alias_admin (prioridad) o por nombre del
+    extractor. Devuelve el phone normalizado del PRIMER match, o None.
+    Búsqueda case-insensitive, contains. Si hay ambigüedad (varios matches),
+    devuelve el primero por orden alfabético del archivo."""
+    if not query:
+        return None
+    q = query.strip().lower()
+    if not q:
+        return None
+    candidatos_alias: list[str] = []
+    candidatos_nombre: list[str] = []
+    for f in sorted(PERFILES_DIR.glob("*.json")):
+        try:
+            perfil = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        alias = (perfil.get("alias_admin") or "").strip().lower()
+        nombre = (perfil.get("nombre") or "").strip().lower()
+        if alias and (q == alias or q in alias):
+            candidatos_alias.append(f.stem)
+        elif nombre and nombre != "desconocido" and (q == nombre or q in nombre):
+            candidatos_nombre.append(f.stem)
+    if candidatos_alias:
+        return candidatos_alias[0]
+    if candidatos_nombre:
+        return candidatos_nombre[0]
+    return None
 
 
 def _inventario_prospectos() -> str:
@@ -3076,12 +3274,16 @@ def _inventario_prospectos() -> str:
         ultimo_u = next((m["content"][:80] for m in reversed(data) if m["role"] == "user"), "")
         perfil = _perfil_cliente(f.stem)
         nombre = perfil.get("nombre", "?")
+        alias = (perfil.get("alias_admin") or "").strip()
         negocio = perfil.get("negocio", "?")
         tipo = perfil.get("tipo_negocio", "?")
         ciudad = perfil.get("ciudad", "?")
         interes = perfil.get("interes", "?")
+        # Si Eduardo le puso alias, lo destacamos primero. El nombre real
+        # del extractor se conserva como referencia secundaria.
+        etiqueta = f"alias={alias} | " if alias else ""
         lineas.append(
-            f"- {f.stem} | nombre={nombre} | negocio={negocio} | tipo={tipo} | "
+            f"- {f.stem} | {etiqueta}nombre={nombre} | negocio={negocio} | tipo={tipo} | "
             f"ciudad={ciudad} | interés={interes} | {n} msgs | último: {ultimo_ts} | "
             f"último_user: {ultimo_u!r}"
         )
@@ -3202,6 +3404,55 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
         return ""
 
     texto = CMD_ENVIAR_PLANTILLA_RE.sub(_enviar_plantilla, texto)
+
+    def _etiquetar(m):
+        phone_raw = m.group(1).strip()
+        alias = m.group(2).strip()
+        phone_norm = normalizar_numero(phone_raw)
+        phone_e164 = "+" + phone_norm
+        if not alias:
+            notas.append(
+                f"⚠️ CMD_ETIQUETAR a {phone_e164} sin nombre. Formato: "
+                f"[CMD_ETIQUETAR: +52... | NombreInterno]"
+            )
+            return ""
+        # Validamos que ese número sí tenga al menos una conversación —
+        # si no hay perfil ni conversación, etiquetar a un fantasma es ruido.
+        conv_existe = (CONVERSACIONES_DIR / f"{phone_norm}.json").exists()
+        ok = _perfil_set_alias(phone_norm, alias)
+        if ok:
+            extra = "" if conv_existe else (
+                " (ojo: aún no tengo conversación con ese número, "
+                "el alias queda guardado para cuando llegue)"
+            )
+            notas.append(
+                f"✅ {phone_e164} etiquetado como \"{alias}\" en mi "
+                f"contexto interno.{extra} Cuando me digas "
+                f"\"mándale a {alias}\" lo voy a encontrar."
+            )
+        else:
+            notas.append(
+                f"❌ No pude guardar la etiqueta para {phone_e164}. Revisa logs."
+            )
+        return ""
+
+    texto = CMD_ETIQUETAR_RE.sub(_etiquetar, texto)
+
+    def _quitar_etiqueta(m):
+        phone_raw = m.group(1).strip()
+        phone_norm = normalizar_numero(phone_raw)
+        phone_e164 = "+" + phone_norm
+        habia = _perfil_quitar_alias(phone_norm)
+        if habia:
+            notas.append(f"✅ Etiqueta interna borrada de {phone_e164}.")
+        else:
+            notas.append(
+                f"ℹ️ {phone_e164} no tenía etiqueta interna, no había nada "
+                f"que borrar."
+            )
+        return ""
+
+    texto = CMD_QUITAR_ETIQUETA_RE.sub(_quitar_etiqueta, texto)
 
     def _borrar(m):
         phone_raw = m.group(1).strip()

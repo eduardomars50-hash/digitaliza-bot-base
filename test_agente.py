@@ -384,5 +384,118 @@ class TestClasificacionTipoCliente(unittest.TestCase):
         self.assertIn("TIPO DE PROSPECTO", ctx)
 
 
+class TestAliasAdmin(unittest.TestCase):
+    """Alias interno (separado del nombre del extractor automático).
+    Permite a Eduardo etiquetar clientes con nombres propios sin tocar
+    contactos de WhatsApp."""
+
+    PHONE = "525577778888"
+
+    def setUp(self):
+        phone_norm = agente.normalizar_numero(self.PHONE)
+        # Limpiar perfil y conversación previos del test.
+        for d, suffix in (
+            (agente.PERFILES_DIR, ".json"),
+            (agente.CONVERSACIONES_DIR, ".json"),
+        ):
+            p = d / f"{phone_norm}{suffix}"
+            p.unlink(missing_ok=True)
+
+    def test_set_alias_crea_perfil_minimo(self):
+        ok = agente._perfil_set_alias(self.PHONE, "Francisco Castillo")
+        self.assertTrue(ok)
+        perfil = agente._perfil_cliente(self.PHONE) or {}
+        # Sin conversación, _perfil_cliente devuelve {} pero el alias
+        # quedó en disco. Lo leemos directo.
+        import json as _json
+        phone_norm = agente.normalizar_numero(self.PHONE)
+        p = agente.PERFILES_DIR / f"{phone_norm}.json"
+        self.assertTrue(p.exists())
+        data = _json.loads(p.read_text(encoding="utf-8"))
+        self.assertEqual(data.get("alias_admin"), "Francisco Castillo")
+
+    def test_set_alias_sobrescribe(self):
+        agente._perfil_set_alias(self.PHONE, "Original")
+        agente._perfil_set_alias(self.PHONE, "Nuevo")
+        import json as _json
+        phone_norm = agente.normalizar_numero(self.PHONE)
+        data = _json.loads(
+            (agente.PERFILES_DIR / f"{phone_norm}.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(data["alias_admin"], "Nuevo")
+
+    def test_quitar_alias(self):
+        agente._perfil_set_alias(self.PHONE, "Pepe")
+        habia = agente._perfil_quitar_alias(self.PHONE)
+        self.assertTrue(habia)
+        import json as _json
+        phone_norm = agente.normalizar_numero(self.PHONE)
+        data = _json.loads(
+            (agente.PERFILES_DIR / f"{phone_norm}.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("alias_admin", data)
+
+    def test_quitar_alias_inexistente(self):
+        habia = agente._perfil_quitar_alias(self.PHONE)
+        self.assertFalse(habia)
+
+    def test_buscar_por_alias(self):
+        agente._perfil_set_alias(self.PHONE, "Francisco Castillo")
+        encontrado = agente._buscar_phone_por_alias_o_nombre("Francisco Castillo")
+        self.assertEqual(encontrado, agente.normalizar_numero(self.PHONE))
+
+    def test_buscar_por_alias_parcial_case_insensitive(self):
+        agente._perfil_set_alias(self.PHONE, "Francisco Castillo")
+        # contains + case-insensitive
+        self.assertEqual(
+            agente._buscar_phone_por_alias_o_nombre("francisco"),
+            agente.normalizar_numero(self.PHONE),
+        )
+        self.assertEqual(
+            agente._buscar_phone_por_alias_o_nombre("CASTILLO"),
+            agente.normalizar_numero(self.PHONE),
+        )
+
+    def test_buscar_no_encuentra(self):
+        self.assertIsNone(
+            agente._buscar_phone_por_alias_o_nombre("Nadie Inexistente XYZ")
+        )
+
+    def test_buscar_query_vacia(self):
+        self.assertIsNone(agente._buscar_phone_por_alias_o_nombre(""))
+        self.assertIsNone(agente._buscar_phone_por_alias_o_nombre("   "))
+
+
+class TestComandosEtiquetar(unittest.TestCase):
+    """Regex y handlers de los nuevos comandos admin."""
+
+    def test_regex_etiquetar_match(self):
+        m = agente.CMD_ETIQUETAR_RE.search(
+            "[CMD_ETIQUETAR: +5219991112233 | Francisco Castillo]"
+        )
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "+5219991112233")
+        self.assertEqual(m.group(2).strip(), "Francisco Castillo")
+
+    def test_regex_etiquetar_alias_con_espacios(self):
+        m = agente.CMD_ETIQUETAR_RE.search(
+            "[CMD_ETIQUETAR:+529876543210|Ana María del Carmen]"
+        )
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(2).strip(), "Ana María del Carmen")
+
+    def test_regex_quitar_etiqueta_match(self):
+        m = agente.CMD_QUITAR_ETIQUETA_RE.search(
+            "[CMD_QUITAR_ETIQUETA: +5219995554433]"
+        )
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "+5219995554433")
+
+    def test_sanitizer_atrapa_etiquetar_leak(self):
+        leak = "Listo, voy a [CMD_ETIQUETAR: +52... | Pepe] al cliente."
+        limpio = agente._sanitizar_salida(leak)
+        self.assertNotIn("ETIQUETAR", limpio.upper())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
