@@ -59,6 +59,14 @@ LEAD_TAG_RE = re.compile(r"\[LEAD_CAPTURADO:([^\]]+)\]", re.IGNORECASE)
 YCLOUD_SEND_URL = "https://api.ycloud.com/v2/whatsapp/messages"
 YCLOUD_MEDIA_URL = "https://api.ycloud.com/v2/whatsapp/media"
 
+# Plantilla aprobada por Meta para reabrir ventana 24h con clientes inactivos.
+# Cuerpo: "Hola {{1}}, aquí Eduardo de Digitaliza. Quedó pendiente nuestra
+# conversación sobre {{2}}. ¿Te acomoda retomarla?"
+# Botones quick-reply: "Sí, retomamos" / "Otro momento" / "Ya no, gracias"
+PLANTILLA_SEGUIMIENTO_NAME = "seguimiento_digitaliza_v1"
+PLANTILLA_SEGUIMIENTO_LANG = "es_MX"
+PLANTILLA_SEGUIMIENTO_BOTONES = ("Sí, retomamos", "Otro momento", "Ya no, gracias")
+
 # Rate limiting
 RATE_LIMIT_MAX = 20           # mensajes por ventana
 RATE_LIMIT_WINDOW = 60        # segundos
@@ -696,6 +704,37 @@ MEMORIA Y CONTEXTO:
   responde EXACTAMENTE con la señal interna: {senal}
 - Esa señal NO se muestra al cliente, es solo interna. No agregues nada más cuando
   la uses.
+
+RESPUESTAS A LA PLANTILLA DE SEGUIMIENTO (CRÍTICO):
+
+A veces el cliente recibe la plantilla "seguimiento_digitaliza_v1" enviada
+por Eduardo cuando habían dejado una conversación pendiente. La plantilla
+dice "Hola [nombre], aquí Eduardo de Digitaliza. Quedó pendiente nuestra
+conversación sobre [tema]. ¿Te acomoda retomarla?" con 3 botones quick-reply.
+
+Si en el historial reciente aparece una línea tuya tipo
+"[PLANTILLA seguimiento_digitaliza_v1] ..." y el cliente responde EXACTAMENTE
+con uno de los 3 textos de los botones (o muy similar):
+
+CASO A — Cliente responde "Sí, retomamos" (o "sí", "va", "claro", "dale"):
+- Trátalo como reactivación del prospecto. NO te re-presentes (la plantilla
+  ya lo hizo). Retoma la conversación EN EL TEMA pendiente que Eduardo puso
+  en la plantilla. Tono cálido y directo: "Va, qué gusto. Te explico [tema]…"
+  o "Perfecto, retomamos. Cuéntame, ¿en qué te quedaste pensando?".
+
+CASO B — Cliente responde "Otro momento" (o "después", "hoy no", "más tarde"):
+- Cierre amable y respetuoso, NO insistas. Ejemplo:
+  "Va, sin presión. Cuando te acomode aquí estoy 🙏"
+- Emite [INTENTO_FUTURO] al final para que Eduardo lo siga en unos días.
+
+CASO C — Cliente responde "Ya no, gracias" (o "no me interesa", "no, gracias"):
+- Cierre cordial y respetuoso, sin venta extra. Ejemplo:
+  "Va, gracias por avisar. Cualquier cosa aquí estamos 👋"
+- Emite [PERDIDA: razon=no_interesado] al final para registrar.
+- Después de este mensaje, NO mandes más mensajes proactivos a este cliente.
+
+Si la respuesta del cliente es ambigua ("?", "qué onda", emoji), no asumas
+que toca botón — pregúntale natural en qué le ayudas.
 
 DETECCIÓN DE INTENCIÓN DE COMPRA (INTERNO):
 - Si detectas que el prospecto quiere CONTRATAR, COMPRAR, EMPEZAR o AGENDAR LLAMADA
@@ -1502,6 +1541,74 @@ def ycloud_enviar_texto(from_number: str, to_number: str,
                 first_error = f"excepción: {type(e).__name__}: {e}"[:240]
         time.sleep(0.4)  # pequeño respiro entre partes
     return any_ok, first_error
+
+
+def ycloud_enviar_plantilla(
+    from_number: str, to_number: str,
+    template_name: str = PLANTILLA_SEGUIMIENTO_NAME,
+    lang_code: str = PLANTILLA_SEGUIMIENTO_LANG,
+    params: list[str] | None = None,
+) -> tuple[bool, str]:
+    """Envía un message template aprobado por Meta a través de YCloud.
+    Sirve para reabrir la ventana 24h con clientes inactivos.
+
+    params: lista de strings para los placeholders {{1}}, {{2}}, ...
+    Para seguimiento_digitaliza_v1: [nombre_cliente, tema_pendiente].
+
+    Devuelve (ok, detalle). Detalle vacío si todo bien.
+    """
+    params = params or []
+    ext_id = f"{_BOT_SENT_PREFIX}{uuid.uuid4().hex[:20]}"
+    _marcar_id_de_bot(ext_id)
+    payload = {
+        "from": from_number,
+        "to": to_number,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": lang_code},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": p} for p in params
+                    ],
+                }
+            ] if params else [],
+        },
+        "externalId": ext_id,
+    }
+    try:
+        r = requests.post(
+            YCLOUD_SEND_URL,
+            headers={
+                "X-API-Key": YCLOUD_API_KEY,
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=20,
+        )
+        log.info(
+            "[OUT-TEMPLATE -> %s] %s | %s | params=%s",
+            to_number, r.status_code, template_name, params,
+        )
+        if r.status_code >= 400:
+            log.error("YCloud template error: %s", r.text[:500])
+            snippet = (r.text or "").strip().replace("\n", " ")[:240]
+            return False, f"HTTP {r.status_code}: {snippet}"
+        try:
+            resp_json = r.json() if r.content else {}
+            if isinstance(resp_json, dict):
+                for k in ("id", "wamid", "messageId"):
+                    v = resp_json.get(k)
+                    if isinstance(v, str) and v:
+                        _marcar_id_de_bot(v)
+        except Exception:
+            pass
+        return True, ""
+    except Exception as e:
+        log.exception("Error enviando plantilla a %s", to_number)
+        return False, f"excepción: {type(e).__name__}: {e}"[:240]
 
 
 def _trocear(texto: str, limite: int) -> list[str]:
@@ -2380,6 +2487,7 @@ _TAG_KEYWORDS = (
     "CONSULTAR", "AGENDAR",
     "ALERTA_PRECIO", "INTENTO_FUTURO", "ESCALACION",
     "COMPETIDOR", "PERDIDA", "REFERIDO",
+    "PLANTILLA", "seguimiento_digitaliza",
 )
 
 # Líneas que mencionan asignación de variables del perfil.
@@ -2610,6 +2718,32 @@ mandártelo; NO los muestres, NO los menciones al usuario final).
      Si solo escribes lo neutral, cuando el sistema lo rechace tu
      mensaje no se contradice con la nota ⚠️ que aparece abajo.
 
+1b. ENVIAR PLANTILLA DE SEGUIMIENTO (única forma de reabrir ventana 24h
+    con clientes inactivos cuando NO te han escrito en >24 horas):
+     [CMD_ENVIAR_PLANTILLA: +52XXXXXXXXXX | NombreCliente | tema pendiente breve]
+   - La plantilla aprobada por Meta es seguimiento_digitaliza_v1 y dice:
+       "Hola {NombreCliente}, aquí Eduardo de Digitaliza. Quedó pendiente
+        nuestra conversación sobre {tema pendiente}. ¿Te acomoda retomarla?"
+     Footer fijo: "Digitaliza — automatización con IA"
+     3 botones quick-reply: Sí, retomamos / Otro momento / Ya no, gracias
+   - Cuándo USARLO:
+     · Cuando Eduardo dice "manda seguimiento a +52...", "reactiva a Regina",
+       "vuelve a escribirle al de la barbería que se enfrió".
+     · Cuando intentaste [CMD_ENVIAR] y el sistema te respondió
+       "ventana 24h cerrada".
+   - Cómo elegir nombre y tema:
+     · Nombre = primer nombre del cliente (Regina, Juan, etc.). Si no lo
+       conoces, usa lo que Eduardo te diga. Si Eduardo dice solo "el de la
+       barbería", confirma UNA sola vez con él el nombre antes de mandar.
+     · Tema = frase corta sin signos de puntuación raros, de hasta ~50 chars
+       que resuma lo que se quedó a medias. Ejemplos válidos:
+         "la app a la medida para tu consultorio"
+         "los tres tiers del bot que te pasé"
+         "el bot para tu barbería"
+     · Tema NO debe contener "|" ni "]" (rompe el regex).
+   - Una sola línea con el tag. NO afirmes éxito antes de tiempo (igual que
+     CMD_ENVIAR — el sistema confirma con ✅/❌ al final).
+
 2. BORRAR conversación de un cliente:
      [CMD_BORRAR: +52XXXXXXXXXX]
    - Si es obvio (Eduardo dijo "bórralo"), ejecútalo sin preguntar. Si es ambiguo,
@@ -2833,6 +2967,10 @@ def _es_id_de_bot(id_str: str) -> bool:
 
 CMD_BORRAR_RE = re.compile(r"\[CMD_BORRAR:\s*(\+?\d+)\s*\]", re.IGNORECASE)
 CMD_VER_RE = re.compile(r"\[CMD_VER:\s*(\+?\d+)\s*\]", re.IGNORECASE)
+CMD_ENVIAR_PLANTILLA_RE = re.compile(
+    r"\[CMD_ENVIAR_PLANTILLA:\s*(\+?\d+)\s*\|\s*([^|\]]+?)\s*\|\s*([^\]]+?)\s*\]",
+    re.IGNORECASE,
+)
 CMD_ENVIAR_RE = re.compile(r"\[CMD_ENVIAR:\s*(\+?\d+)\s*\|\s*([^\]]+?)\s*\]",
                            re.IGNORECASE | re.DOTALL)
 
@@ -2990,14 +3128,13 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
         # Bloquear upfront es más honesto que reportar un falso positivo.
         if not ventana_24h_abierta(phone_norm):
             notas.append(
-                f"⚠️ {phone_e164}: no le puedo escribir. Ese cliente no "
-                f"te ha escrito en más de 24 horas y WhatsApp bloquea "
-                f"los mensajes libres en ese caso (ya lo probamos hoy: "
-                f"el sistema parecía mandarlo pero en realidad no "
-                f"llegaba). Para escribirle de nuevo necesitamos una "
-                f"plantilla aprobada por Meta (aún no la tenemos). "
-                f"Alternativa: pídele al cliente que te escriba él "
-                f"primero y se vuelve a abrir la ventana."
+                f"⚠️ {phone_e164}: ventana 24h cerrada (no te ha escrito "
+                f"en >24h). El mensaje libre lo bloquea Meta. "
+                f"Usa la plantilla de seguimiento aprobada con:\n"
+                f"  [CMD_ENVIAR_PLANTILLA: {phone_e164} | "
+                f"NombreCliente | tema pendiente breve]\n"
+                f"Eso reabre la ventana y el cliente puede tocar uno de "
+                f"los 3 botones (Sí retomamos / Otro momento / Ya no)."
             )
             return ""
         from_number = BOT_PHONE or "525631832858"
@@ -3019,6 +3156,52 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
         return ""
 
     texto = CMD_ENVIAR_RE.sub(_enviar, texto)
+
+    def _enviar_plantilla(m):
+        phone_raw = m.group(1).strip()
+        nombre_cliente = m.group(2).strip()
+        tema_pendiente = m.group(3).strip()
+        phone_norm = normalizar_numero(phone_raw)
+        phone_e164 = "+" + phone_norm
+        if not nombre_cliente or not tema_pendiente:
+            notas.append(
+                f"⚠️ CMD_ENVIAR_PLANTILLA a {phone_e164} sin nombre o "
+                f"tema. Formato: [CMD_ENVIAR_PLANTILLA: +52... | Nombre | tema pendiente]"
+            )
+            return ""
+        from_number = BOT_PHONE or "525631832858"
+        from_e164 = "+" + normalizar_numero(from_number)
+        try:
+            ok, err = ycloud_enviar_plantilla(
+                from_e164, phone_e164,
+                params=[nombre_cliente, tema_pendiente],
+            )
+        except Exception as e:
+            notas.append(f"❌ Error enviando plantilla a {phone_e164}: {e}")
+            return ""
+        if ok:
+            cuerpo_render = (
+                f"Hola {nombre_cliente}, aquí Eduardo de Digitaliza. "
+                f"Quedó pendiente nuestra conversación sobre {tema_pendiente}. "
+                f"¿Te acomoda retomarla?"
+            )
+            notas.append(
+                f"✅ Plantilla enviada a {phone_e164}: \"{cuerpo_render[:200]}\""
+            )
+            try:
+                guardar_mensaje(
+                    phone_norm, "assistant",
+                    f"[PLANTILLA seguimiento_digitaliza_v1] {cuerpo_render}",
+                )
+            except Exception:
+                pass
+        else:
+            notas.append(
+                f"❌ No se pudo enviar plantilla a {phone_e164}: {err}"
+            )
+        return ""
+
+    texto = CMD_ENVIAR_PLANTILLA_RE.sub(_enviar_plantilla, texto)
 
     def _borrar(m):
         phone_raw = m.group(1).strip()
