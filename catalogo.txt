@@ -77,40 +77,165 @@ y dashboard. Presupuesto más alto, volumen alto.
 SERVICIO ADICIONAL: PÁGINAS WEB
 ═══════════════════════════════════════════════════════════
 Digitaliza también diseña y desarrolla páginas web para negocios.
+Hay 2 paquetes con PRECIO FIJO (Nivel 1 y Nivel 2) y opción CUSTOM
+para proyectos ambiciosos. Estamos en fase de lanzamiento: los
+primeros 10 clientes entran a precio de lanzamiento.
+
+Página oficial del servicio: somosdigitaliza.com/sitios-web
 
 ─────────────────────────────────────────────────────────
-LANDING PAGE (sitio de una sola página)
+NIVEL 1: LANDING (paquete fijo)
 ─────────────────────────────────────────────────────────
-Precio: entre $2,000 y $4,000 MXN (pago único por el sitio).
-Ideal para: negocios que quieren una presencia digital simple —
-info del negocio, contacto, horarios, fotos, botón de WhatsApp.
+Precio:        $3,500 MXN (pago único, precio de lanzamiento)
+Precio normal: $4,200 MXN (después de los 10 cupos de lanzamiento)
+
+Incluye:
+- Diseño moderno y responsive (mobile, tablet, desktop).
+- Una sola página con Hero + 3-4 secciones.
+- Formulario de contacto + botón WhatsApp directo.
+- Dominio .com (1 año incluido).
+- Hosting + SSL (1 año incluido).
+- Garantía de 15 días sobre bugs técnicos.
+- Entrega en máximo 3 días hábiles.
+
+Ideal para: consultorios, salones, gestorías, profesionales
+independientes.
 
 ─────────────────────────────────────────────────────────
-SITIO WEB COMPLETO / CUSTOM
+NIVEL 2: SITIO WEB COMPLETO (paquete fijo)
 ─────────────────────────────────────────────────────────
-Precio: desde $4,000 MXN, depende del alcance.
-Incluye según lo que quiera el cliente: varias páginas, catálogo,
-reservas, integraciones, dashboard, etc. El precio exacto lo cierra
-Eduardo con el cliente según los requerimientos.
+Precio:        $6,500 MXN (pago único, precio de lanzamiento)
+Precio normal: $8,200 MXN (después de los 10 cupos de lanzamiento)
+
+Incluye:
+- Todo lo de Nivel 1.
+- 4-6 secciones (incluye galería o catálogo).
+- Integración con Google Maps.
+- Optimización SEO básica.
+- Dominio .com + hosting + SSL (1 año todo incluido).
+- Garantía de 15 días sobre bugs técnicos.
+- Entrega en máximo 3 días hábiles.
+
+Ideal para: constructoras, clínicas con varios servicios,
+restaurantes, comercios con catálogo.
 
 ─────────────────────────────────────────────────────────
-CÓMO RESPONDE EL BOT SOBRE PÁGINAS WEB
+PROYECTO CUSTOM (cotización individual)
 ─────────────────────────────────────────────────────────
-1. Si el prospecto pregunta "¿hacen páginas web?" o similar:
-   Confirma con naturalidad — SÍ, Digitaliza también diseña páginas web.
-2. Si pide rango de precios: da SOLO el rango general:
-   "Una landing sencilla va entre $2,000 y $4,000. Un sitio más
-    completo parte de $4,000 y depende de lo que necesites
-    (catálogo, reservas, integraciones, etc.)."
-3. El bot NO cierra la venta de una página web por sí mismo. Cuando
-   el prospecto muestre interés CONCRETO (pregunta específica sobre
-   features, timing, quiere cotización detallada), el bot:
-   - Le dice: "Para cerrar bien esto te paso con Eduardo, él te
-     cotiza a la medida según lo que necesites."
-   - Emite la señal interna [EVENTO:QUIERE_WEB] (línea sola) para
-     avisarle a Eduardo por WhatsApp.
-4. Precio exacto, alcance, timeline, integraciones específicas:
-   SIEMPRE escala con [EVENTO:QUIERE_WEB]. NO inventa.
+Para ideas más complejas que no caben en los paquetes fijos:
+e-commerce, sitios con varios idiomas, integraciones a CRM, paneles
+internos, reservaciones online, etc.
+
+El bot NO cotiza proyectos custom. Si el prospecto describe algo
+que no entra en Nivel 1 o Nivel 2, escala con [EVENTO:QUIERE_WEB]
+y le dice algo como: "Ese proyecto es custom — para cerrar bien
+esto te paso con Eduardo, él te cotiza a la medida según lo que
+necesites."
+
+─────────────────────────────────────────────────────────
+RENOVACIÓN ANUAL (después del primer año)
+─────────────────────────────────────────────────────────
+Precio: $1,500 MXN / año (mismo precio en lanzamiento y normal —
+NO hay precio promocional para la renovación)
+
+Cubre:
+- Hosting + dominio + SSL renovados.
+- Monitoreo del sitio.
+- Hasta 2 ajustes menores al año (cambiar un teléfono, un horario,
+  una foto).
+- Cambios mayores o secciones nuevas se cotizan aparte.
+
+─────────────────────────────────────────────────────────
+QUÉ INCLUYE SIEMPRE (ambos niveles)
+─────────────────────────────────────────────────────────
+- Dominio .com (1 año).
+- Hosting + SSL (1 año).
+- Diseño 100% responsive.
+- Botón WhatsApp directo.
+- Garantía de 15 días sobre bugs técnicos.
+- Entrega en 3 días hábiles.
+
+─────────────────────────────────────────────────────────
+CÓMO FUNCIONA EL PROCESO
+─────────────────────────────────────────────────────────
+1. Brief inicial: te pasamos un cuestionario corto. Nos mandas tu
+   logo, contenido, fotos y referencias. Pagas el 50% y arrancamos.
+2. Diseño y desarrollo: en máximo 3 días hábiles tu sitio está listo.
+   Te lo mostramos ANTES de publicar para tu aprobación.
+3. Publicación: pagas el 50% restante, publicamos en tu dominio.
+   15 días de garantía para corregir bugs técnicos sin costo.
+
+─────────────────────────────────────────────────────────
+MÉTODO DE PAGO (páginas web)
+─────────────────────────────────────────────────────────
+- 50% al firmar el brief y arrancar.
+- 50% al entregar antes de publicar.
+- Aceptamos transferencia bancaria.
+
+─────────────────────────────────────────────────────────
+PREGUNTAS FRECUENTES — PÁGINAS WEB
+─────────────────────────────────────────────────────────
+Q: ¿Y si no me gusta el diseño que hacen?
+A: Te mostramos el diseño completo ANTES de publicar nada. Lo
+platicamos contigo, ajustamos lo que no cuadre y lo afinamos hasta
+que estés convencido. La idea es que salgas con un sitio del que
+te sientas orgulloso, no uno que toleres.
+
+Q: ¿Y si quiero cambios después de la entrega?
+A: Tienes 15 días de garantía para reportar bugs técnicos sin costo
+(formulario que falla, link roto, error visual). Cambios de
+contenido, color o diseño se cotizan aparte siempre — eso se
+platica antes para que no haya sorpresas.
+
+Q: ¿Qué pasa si no tengo logo o fotos?
+A: Si no tienes logo, te recomendamos uno de nuestros aliados para
+que te lo armen. Para fotos, podemos usar imágenes de stock
+profesionales sin costo extra. Lo ideal son fotos reales de tu
+negocio.
+
+Q: ¿Y si mi sitio se cae?
+A: Mientras tengas la renovación anual activa ($1,500/año),
+monitoreamos y resolvemos cualquier caída técnica sin costo. Si
+decides no renovar, el sitio queda en tus manos.
+
+Q: ¿Puedo cambiar de Nivel 1 a Nivel 2 después?
+A: Sí. Pagas la diferencia entre los dos paquetes + un costo de
+migración pequeño y expandimos tu sitio.
+
+─────────────────────────────────────────────────────────
+CÓMO RESPONDE EL BOT SOBRE PÁGINAS WEB (reglas)
+─────────────────────────────────────────────────────────
+1. Si preguntan "¿hacen páginas web?": confirma con naturalidad —
+   sí, también. Menciona brevemente que hay 2 paquetes con precio
+   fijo (Nivel 1 y Nivel 2) o cotización custom para proyectos más
+   ambiciosos. Puede mencionar la página somosdigitaliza.com/sitios-web.
+
+2. Si piden precios de Nivel 1 o Nivel 2:
+   - SIEMPRE presenta los dos precios juntos (lanzamiento + normal).
+     Ejemplo: "El Nivel 1 (Landing) está en $3,500 de lanzamiento.
+     El precio normal después es $4,200. Incluye dominio, hosting,
+     SSL y garantía de 15 días."
+   - Default si dudas qué nivel recomendar: Nivel 1 para negocios
+     chicos / una página, Nivel 2 si el negocio tiene varias
+     secciones, catálogo o servicios.
+
+3. NUNCA cotiza proyectos custom (e-commerce, integraciones
+   complejas, multi-idioma, reservaciones, etc.). Escala con
+   [EVENTO:QUIERE_WEB] y deja el cierre a Eduardo.
+
+4. NUNCA inventa rondas de revisión específicas, descuentos, ni
+   timelines distintos a los del catálogo. La política oficial de
+   diseño es "te lo mostramos antes de publicar y lo ajustamos
+   hasta que estés convencido" — SIN números específicos de rondas
+   ni reembolsos.
+
+5. Si el prospecto rechaza el precio o pide descuento en páginas
+   web: aplica la POLÍTICA DE NEGOCIACIÓN general (escala al
+   asesor humano, no negocia números).
+
+6. Renovación anual ($1,500/año): es opcional. El sitio queda en
+   manos del cliente si no renueva. Aclarar que SIN renovación NO
+   hay monitoreo ni los 2 ajustes menores anuales.
 
 ═══════════════════════════════════════════════════════════
 CÓMO DAR PRECIOS (obligatorio)
