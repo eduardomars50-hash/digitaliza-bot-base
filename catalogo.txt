@@ -149,11 +149,11 @@ QUÉ INCLUYE SIEMPRE (ambos niveles)
 ─────────────────────────────────────────────────────────
 CÓMO FUNCIONA EL PROCESO
 ─────────────────────────────────────────────────────────
-1. Brief inicial: te pasamos un cuestionario corto. Nos mandas tu
-   logo, contenido, fotos y referencias. Pagas el 50% y arrancamos.
-2. Diseño y desarrollo: en máximo 3 días hábiles tu sitio está listo.
-   Te lo mostramos ANTES de publicar para tu aprobación.
-3. Publicación: pagas el 50% restante, publicamos en tu dominio.
+1. Brief inicial: le pasamos un cuestionario corto. Nos manda su
+   logo, contenido, fotos y referencias. Paga el 50% y arrancamos.
+2. Diseño y desarrollo: en máximo 3 días hábiles su sitio está listo.
+   Se lo mostramos ANTES de publicar para su aprobación.
+3. Publicación: paga el 50% restante, publicamos en su dominio.
    15 días de garantía para corregir bugs técnicos sin costo.
 
 ─────────────────────────────────────────────────────────
@@ -167,31 +167,31 @@ MÉTODO DE PAGO (páginas web)
 PREGUNTAS FRECUENTES — PÁGINAS WEB
 ─────────────────────────────────────────────────────────
 Q: ¿Y si no me gusta el diseño que hacen?
-A: Te mostramos el diseño completo ANTES de publicar nada. Lo
-platicamos contigo, ajustamos lo que no cuadre y lo afinamos hasta
-que estés convencido. La idea es que salgas con un sitio del que
-te sientas orgulloso, no uno que toleres.
+A: Le mostramos el diseño completo ANTES de publicar nada. Lo
+platicamos con usted, ajustamos lo que no cuadre y lo afinamos
+hasta que esté convencido. La idea es que salga con un sitio del
+que se sienta orgulloso, no uno que tolere.
 
 Q: ¿Y si quiero cambios después de la entrega?
-A: Tienes 15 días de garantía para reportar bugs técnicos sin costo
+A: Tiene 15 días de garantía para reportar bugs técnicos sin costo
 (formulario que falla, link roto, error visual). Cambios de
 contenido, color o diseño se cotizan aparte siempre — eso se
 platica antes para que no haya sorpresas.
 
 Q: ¿Qué pasa si no tengo logo o fotos?
-A: Si no tienes logo, te recomendamos uno de nuestros aliados para
-que te lo armen. Para fotos, podemos usar imágenes de stock
-profesionales sin costo extra. Lo ideal son fotos reales de tu
+A: Si no tiene logo, le recomendamos uno de nuestros aliados para
+que se lo armen. Para fotos, podemos usar imágenes de stock
+profesionales sin costo extra. Lo ideal son fotos reales de su
 negocio.
 
 Q: ¿Y si mi sitio se cae?
-A: Mientras tengas la renovación anual activa ($1,500/año),
+A: Mientras tenga la renovación anual activa ($1,500/año),
 monitoreamos y resolvemos cualquier caída técnica sin costo. Si
-decides no renovar, el sitio queda en tus manos.
+decide no renovar, el sitio queda en sus manos.
 
 Q: ¿Puedo cambiar de Nivel 1 a Nivel 2 después?
-A: Sí. Pagas la diferencia entre los dos paquetes + un costo de
-migración pequeño y expandimos tu sitio.
+A: Sí. Paga la diferencia entre los dos paquetes + un costo de
+migración pequeño y expandimos su sitio.
 
 ─────────────────────────────────────────────────────────
 CÓMO RESPONDE EL BOT SOBRE PÁGINAS WEB (reglas)
@@ -264,7 +264,7 @@ NO puede ofrecer (siempre escala al asesor):
 Cuando el prospecto pide descuento, dice que está caro, propone otro
 precio, o pregunta si se puede ajustar:
 "Estamos en cohorte fundadora y sí hay margen para aterrizar el precio.
-Te agendo una llamada con un asesor de Marz para cerrarlo."
+Le agendo una llamada con un asesor de Marz para cerrarlo."
 Después agenda la llamada y emite la señal interna de intención de
 compra.
 
@@ -280,14 +280,14 @@ MÉTODOS DE PAGO
 ═══════════════════════════════════════════════════════════
 TIEMPO DE SETUP
 ═══════════════════════════════════════════════════════════
-- De 1 a 3 días hábiles desde que firmas hasta que tu bot está vivo
-  respondiendo a tus clientes.
-- Tú no haces nada técnico: solo nos pasas la info de tu negocio.
-- En una llamada corta de 15 minutos haces dos cosas: dictas un
-  código SMS para conectar tu WhatsApp Business, y compartes tu
+- De 1 a 3 días hábiles desde que firma hasta que su bot está vivo
+  respondiendo a sus clientes.
+- Usted no hace nada técnico: solo nos pasa la info de su negocio.
+- En una llamada corta de 15 minutos hace dos cosas: dicta un
+  código SMS para conectar su WhatsApp Business, y comparte su
   Google Calendar como editor con Marz.
-- No necesitas equipo nuevo, ni SIM nueva, ni instalar nada en tu
-  celular. Tu WhatsApp normal sigue trabajando paralelo al bot.
+- No necesita equipo nuevo, ni SIM nueva, ni instalar nada en su
+  celular. Su WhatsApp normal sigue trabajando paralelo al bot.
 
 ═══════════════════════════════════════════════════════════
 IDIOMAS DISPONIBLES

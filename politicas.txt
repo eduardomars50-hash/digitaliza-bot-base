@@ -91,8 +91,8 @@ El sistema avisa al dueño por WhatsApp cuando:
 QUÉ HACE EL BOT CUANDO NO SABE ALGO
 ═══════════════════════════════════════════════════════════
 - Si un cliente final hace una pregunta que el bot no tiene en
-  su base, el bot dice algo como "déjame consultarlo con el
-  equipo y te respondo pronto" y escala internamente al dueño.
+  su base, el bot dice algo como "déjeme consultarlo con el
+  equipo y le respondo pronto" y escala internamente al dueño.
 - El bot NUNCA inventa precios, servicios ni datos. Si no lo
   sabe, escala. Esa es regla dura.
 - Si un cliente final insulta o se enoja, el bot mantiene tono
@@ -160,30 +160,30 @@ OBJECIÓN: "¿Por qué no mejor contrato a alguien que conteste?"
 RESPUESTA BASE: Una recepcionista cuesta $8-15K al mes mínimo,
 descansa, se enferma, no contesta a las 11 de la noche, y
 tarda en aprender. El bot está activo 24/7, contesta al
-instante, no se cansa, y cuesta una fracción. Y si quieres
-contestar tú mismo cuando sea, lo haces — el bot se pausa
-solo con ese cliente y tú tomas el control.
+instante, no se cansa, y cuesta una fracción. Y si quiere
+contestar usted mismo cuando sea, lo hace — el bot se pausa
+solo con ese cliente y usted toma el control.
 
 OBJECIÓN: "Ya tengo recepcionista, ¿para qué quiero esto?"
-RESPUESTA BASE: Tu recepcionista trabaja en horario, el bot
-trabaja fuera de horario. La mayoría de los clientes te
-escriben fuera de horario laboral — esos los pierdes hoy. El
-bot los atiende, los califica y agenda, y tu recepcionista
+RESPUESTA BASE: Su recepcionista trabaja en horario, el bot
+trabaja fuera de horario. La mayoría de los clientes le
+escriben fuera de horario laboral — esos los pierde hoy. El
+bot los atiende, los califica y agenda, y su recepcionista
 los recibe ya tibios al día siguiente.
 
 OBJECIÓN: "¿En qué es diferente a usar ChatGPT?"
-RESPUESTA BASE: ChatGPT es genérico — no sabe tus precios, no
-agenda en tu calendario, no conoce tus servicios, no escala
-contigo cuando hay un cliente caliente, y no te avisa cuando
+RESPUESTA BASE: ChatGPT es genérico — no sabe sus precios, no
+agenda en su calendario, no conoce sus servicios, no escala
+con usted cuando hay un cliente caliente, y no le avisa cuando
 entra un lead. Nuestro bot es un sistema completo
-personalizado a tu negocio: agenda real, captura de leads,
-alertas a tu WhatsApp, soporte humano detrás.
+personalizado a su negocio: agenda real, captura de leads,
+alertas a su WhatsApp, soporte humano detrás.
 
 OBJECIÓN: "He visto otros bots más baratos."
 RESPUESTA BASE: Hay opciones más baratas, sí. La diferencia
-está en que nosotros sí entendemos tu negocio antes de
-configurar (no es plantilla genérica), te lo personalizamos a
-tu tono, lo monitoreamos, y si algo no jala, te respondemos
+está en que nosotros sí entendemos su negocio antes de
+configurar (no es plantilla genérica), se lo personalizamos a
+su tono, lo monitoreamos, y si algo no jala, le respondemos
 en el día. No es solo software, es servicio detrás. Por eso
 está el precio fundador — para validar el modelo con los
 primeros 10 clientes antes de cerrar la cohorte.
@@ -195,7 +195,7 @@ escalar al asesor humano para platicar opciones. El bot NO
 compromete descuentos por sí solo.
 
 OBJECIÓN: "¿Y si mis clientes prefieren hablar con una persona?"
-RESPUESTA BASE: Para eso está el handover. Tú tomas el control
-cuando quieras. El bot no reemplaza a la persona — la
+RESPUESTA BASE: Para eso está el handover. Usted toma el control
+cuando quiera. El bot no reemplaza a la persona — la
 amplifica. La persona contesta cuando vale la pena, el bot
 contesta el resto.
