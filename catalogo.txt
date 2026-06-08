@@ -1,20 +1,24 @@
-# Catálogo oficial de Digitaliza
+# Catálogo oficial de Marz
 # Todos los precios en pesos mexicanos (MXN), sin IVA salvo indicación.
 # El bot SOLO puede ofrecer lo que aparece aquí. NUNCA inventa precios fuera de estas tablas.
 
 ═══════════════════════════════════════════════════════════
-FASE: LANZAMIENTO (precios de HOY, hasta nuevo aviso)
+ESTRUCTURA DE PRECIOS: FUNDADOR + NORMAL
 ═══════════════════════════════════════════════════════════
-Estamos cerrando clientes a precio de lanzamiento. Cuando completemos
-3 clientes más en chatbot o 2 más en app, subimos a los precios
-normales. Mientras tanto, los precios de HOY son los siguientes.
+Tenemos 2 precios por paquete:
+- FUNDADOR (mes 1-3): para los primeros 10 clientes que entran.
+- NORMAL (mes 4+): a partir del cuarto mes el cliente sube a
+  precio normal, y todos los clientes nuevos que lleguen DESPUÉS
+  de cerrar la cohorte fundadora entran directo a precio normal.
+
+El setup es un pago único al inicio, mismo monto en fundador y normal.
 
 ─────────────────────────────────────────────────────────
-TIER 1: CHATBOT ARRANQUE
+TIER 1: CHATBOT ESENCIAL
 ─────────────────────────────────────────────────────────
-Setup:       $1,500 MXN (pago único)
-Mensualidad: $1,500 MXN / mes
-Precio normal (después): $3,000 setup + $2,500/mes
+Setup:                 $2,200 MXN (pago único)
+Mensualidad fundador:  $2,200 MXN / mes (mes 1-3)
+Mensualidad normal:    $3,000 MXN / mes (mes 4+)
 
 Incluye:
 - Bot con IA que responde 24/7 lo que sea.
@@ -26,42 +30,29 @@ tienda chica, cualquier negocio que solo quiere responder FAQs y no
 perder clientes por no contestar.
 
 ─────────────────────────────────────────────────────────
-TIER 2: CHATBOT ESTÁNDAR (default si dudas qué recomendar)
+TIER 2: CHATBOT PRO (default si dudas qué recomendar)
 ─────────────────────────────────────────────────────────
-Setup:       $2,500 MXN (pago único)
-Mensualidad: $2,500 MXN / mes
-Precio normal (después): $5,000 setup + $4,000/mes
+Setup:                 $2,200 MXN (pago único)
+Mensualidad fundador:  $3,500 MXN / mes (mes 1-3)
+Mensualidad normal:    $5,000 MXN / mes (mes 4+)
 
 Incluye:
-- Todo lo de Arranque.
+- Todo lo de Esencial.
 - Agenda de citas (se conecta a Google Calendar).
 - Recordatorios automáticos a clientes.
-
-Ideal para: médicos, dentistas, salones, clínicas, veterinarias,
-spas, cualquier negocio donde la agenda es el corazón.
-
-─────────────────────────────────────────────────────────
-TIER 3: CHATBOT PRO
-─────────────────────────────────────────────────────────
-Setup:       $4,000 MXN (pago único)
-Mensualidad: $4,000 MXN / mes
-Precio normal (después): $8,000 setup + $6,500/mes
-
-Incluye:
-- Todo lo de Estándar.
 - Métricas y reportes de conversaciones.
 - Seguimiento automático a clientes inactivos.
 
-Ideal para: negocios con volumen alto — cadenas pequeñas, clínicas
-con varios doctores, negocios donde las métricas y el follow-up
-importan.
+Ideal para: médicos, dentistas, salones, clínicas, veterinarias,
+spas, despachos, cadenas pequeñas, cualquier negocio donde la agenda
+es el corazón y donde las métricas y el follow-up importan.
 
 ─────────────────────────────────────────────────────────
-TIER 4: APP PERSONALIZADA
+TIER 3: APP PERSONALIZADA
 ─────────────────────────────────────────────────────────
-Setup:       $4,500 MXN (pago único)
-Mensualidad: $4,500 MXN / mes
-Precio normal (después): $9,000 setup + $7,500/mes
+Setup:                 $5,000 MXN (pago único)
+Mensualidad fundador:  $6,500 MXN / mes (mes 1-3)
+Mensualidad normal:    $9,000 MXN / mes (mes 4+)
 
 Incluye:
 - App instalable con la marca del negocio (PWA).
@@ -76,12 +67,12 @@ y dashboard. Presupuesto más alto, volumen alto.
 ═══════════════════════════════════════════════════════════
 SERVICIO ADICIONAL: PÁGINAS WEB
 ═══════════════════════════════════════════════════════════
-Digitaliza también diseña y desarrolla páginas web para negocios.
+Marz también diseña y desarrolla páginas web para negocios.
 Hay 2 paquetes con PRECIO FIJO (Nivel 1 y Nivel 2) y opción CUSTOM
 para proyectos ambiciosos. Estamos en fase de lanzamiento: los
 primeros 10 clientes entran a precio de lanzamiento.
 
-Página oficial del servicio: somosdigitaliza.com/sitios-web
+Página oficial: marz.mx
 
 ─────────────────────────────────────────────────────────
 NIVEL 1: LANDING (paquete fijo)
@@ -208,7 +199,7 @@ CÓMO RESPONDE EL BOT SOBRE PÁGINAS WEB (reglas)
 1. Si preguntan "¿hacen páginas web?": confirma con naturalidad —
    sí, también. Menciona brevemente que hay 2 paquetes con precio
    fijo (Nivel 1 y Nivel 2) o cotización custom para proyectos más
-   ambiciosos. Puede mencionar la página somosdigitaliza.com/sitios-web.
+   ambiciosos. Puede mencionar la página marz.mx.
 
 2. Si piden precios de Nivel 1 o Nivel 2:
    - SIEMPRE presenta los dos precios juntos (lanzamiento + normal).
@@ -238,18 +229,20 @@ CÓMO RESPONDE EL BOT SOBRE PÁGINAS WEB (reglas)
    hay monitoreo ni los 2 ajustes menores anuales.
 
 ═══════════════════════════════════════════════════════════
-CÓMO DAR PRECIOS (obligatorio)
+CÓMO DAR PRECIOS DE CHATBOT (obligatorio)
 ═══════════════════════════════════════════════════════════
-1. SIEMPRE presenta los dos precios juntos: lanzamiento Y normal.
-   Formato base: "Está en $X setup + $X/mes de lanzamiento. Después
-   sube a $Y setup + $Y/mes."
+1. SIEMPRE presenta los dos precios juntos: FUNDADOR Y NORMAL.
+   Formato base: "Está en $X setup + $X/mes los primeros 3 meses
+   (precio fundador). A partir del mes 4 sube a $Y/mes (precio normal)."
 2. NUNCA des rangos pelones tipo "entre $2,000 y $5,000". Da el
    precio del tier específico que recomiendas.
 3. Máximo 2 tiers por mensaje: el que recomiendas y una alternativa
    (arriba o abajo según el prospecto). Si piden ver "todos", ahí sí
-   los 4 en un solo mensaje compacto.
-4. Default si dudas qué tier recomendar: Chatbot Estándar.
+   los 3 en un solo mensaje compacto.
+4. Default si dudas qué tier recomendar: Chatbot Pro.
 5. NUNCA des precios distintos a estas tablas en mensajes distintos.
+6. El precio fundador es para los primeros 10 clientes que entran.
+   No comprometas ese precio si Eduardo ya cerró la cohorte fundadora.
 
 ═══════════════════════════════════════════════════════════
 POLÍTICA DE NEGOCIACIÓN (obligatorio)
@@ -259,8 +252,9 @@ NO negocia precios específicos ni compromete descuentos.
 
 SÍ puede ofrecer sin escalar:
 - Aclarar qué incluye cada tier.
-- Sugerir bajar de tier (ej. de Estándar a Arranque).
-- Recordar que el precio actual es de lanzamiento.
+- Sugerir bajar de tier (ej. de Pro a Esencial).
+- Recordar que el precio fundador es por tiempo limitado (cohorte
+  de 10 clientes).
 
 NO puede ofrecer (siempre escala al asesor):
 - Porcentajes o montos específicos de descuento.
@@ -269,8 +263,8 @@ NO puede ofrecer (siempre escala al asesor):
 
 Cuando el prospecto pide descuento, dice que está caro, propone otro
 precio, o pregunta si se puede ajustar:
-"Estamos en lanzamiento y sí hay margen para aterrizar el precio. Te
-agendo una llamada con un asesor de Digitaliza para cerrarlo."
+"Estamos en cohorte fundadora y sí hay margen para aterrizar el precio.
+Te agendo una llamada con un asesor de Marz para cerrarlo."
 Después agenda la llamada y emite la señal interna de intención de
 compra.
 
@@ -291,7 +285,7 @@ TIEMPO DE SETUP
 - Tú no haces nada técnico: solo nos pasas la info de tu negocio.
 - En una llamada corta de 15 minutos haces dos cosas: dictas un
   código SMS para conectar tu WhatsApp Business, y compartes tu
-  Google Calendar como editor con Digitaliza.
+  Google Calendar como editor con Marz.
 - No necesitas equipo nuevo, ni SIM nueva, ni instalar nada en tu
   celular. Tu WhatsApp normal sigue trabajando paralelo al bot.
 
@@ -305,8 +299,7 @@ IDIOMAS DISPONIBLES
 ═══════════════════════════════════════════════════════════
 CONTACTO / SIGUIENTE PASO
 ═══════════════════════════════════════════════════════════
-- Web: somosdigitaliza.com
-- Instagram: @digitaliza_IA
+- Web: marz.mx
 - Ubicación: Mérida, Yucatán (operamos remoto — llamadas por Google
   Meet o Zoom).
 - Horario para AGENDAR llamadas: L-V 15:00-20:00 (CDT). Fines de semana

@@ -1,4 +1,4 @@
-# Políticas oficiales de Digitaliza
+# Políticas oficiales de Marz
 # Este archivo es fuente de verdad para preguntas frecuentes de prospectos.
 # El bot SOLO puede responder estos temas con la info de aquí.
 # NUNCA inventa fuera de este archivo.
@@ -14,7 +14,7 @@ PROCESO DE INSTALACIÓN Y SETUP
 - Lo único que el cliente hace de su lado, en una llamada de 15
   minutos con nosotros: conectar su WhatsApp Business (le llega
   un código SMS, lo dicta) y compartir su Google Calendar como
-  editor con Digitaliza para que el bot pueda agendar ahí.
+  editor con Marz para que el bot pueda agendar ahí.
 - No necesita comprar equipo, no necesita una computadora nueva,
   no necesita SIM nuevo, no necesita instalar nada en su celular.
 - No necesita darnos su contraseña de WhatsApp ni su contraseña
@@ -143,10 +143,9 @@ NO maneja (por ahora):
 ═══════════════════════════════════════════════════════════
 QUIÉNES SOMOS
 ═══════════════════════════════════════════════════════════
-- Digitaliza es una agencia de automatización con IA fundada
-  a finales de febrero de 2026 en Mérida, Yucatán.
-- Somos 3 personas jóvenes, ambiciosas, dedicadas a este
-  proyecto.
+- Marz es una agencia de automatización con IA fundada
+  a finales de febrero de 2026 en Mérida, Yucatán, por
+  Eduardo Mares, su fundador y único dueño.
 - Operamos remoto. Las llamadas de venta son por Google Meet
   o Zoom (o presencial si el prospecto está en Mérida).
 - Por confidencialidad, no compartimos nombres específicos de
@@ -186,13 +185,14 @@ está en que nosotros sí entendemos tu negocio antes de
 configurar (no es plantilla genérica), te lo personalizamos a
 tu tono, lo monitoreamos, y si algo no jala, te respondemos
 en el día. No es solo software, es servicio detrás. Por eso
-está en lanzamiento — para validar que vale el doble que un
-bot genérico.
+está el precio fundador — para validar el modelo con los
+primeros 10 clientes antes de cerrar la cohorte.
 
 OBJECIÓN: "Está caro."
-RESPUESTA BASE: Recordar precio de lanzamiento, sugerir tier
-más bajo si aplica. Si insiste, escalar al asesor humano para
-platicar opciones. El bot NO compromete descuentos por sí solo.
+RESPUESTA BASE: Recordar precio fundador (mes 1-3) y que es por
+tiempo limitado, sugerir tier más bajo si aplica. Si insiste,
+escalar al asesor humano para platicar opciones. El bot NO
+compromete descuentos por sí solo.
 
 OBJECIÓN: "¿Y si mis clientes prefieren hablar con una persona?"
 RESPUESTA BASE: Para eso está el handover. Tú tomas el control
