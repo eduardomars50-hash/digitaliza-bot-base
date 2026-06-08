@@ -19,3 +19,26 @@ NOTAS: Agencia enfocada en negocios locales de Mérida (salones, barberías, con
 AGENDA_DIAS: L,M,X,J,V
 AGENDA_HORA_INICIO: 15
 AGENDA_HORA_FIN: 20
+
+# ═══════════════════════════════════════════════
+# CONFIGURACIÓN DE RECORDATORIOS PRE-CITA (Feature 1)
+# ═══════════════════════════════════════════════
+# Activan/desactivan los 2 recordatorios automáticos antes de cada cita
+# agendada. El de 24h es seguro y útil para casi todos. El de 2h es más
+# agresivo (puede percibirse como spam si el cliente ya confirmó), por
+# eso default OFF.
+# RECORDATORIOS_HORARIO_INICIO / FIN: solo se mandan recordatorios entre
+# esas horas (zona horaria local del negocio). Default 8:00-21:00.
+RECORDATORIOS_24H_ACTIVO: true
+RECORDATORIOS_2H_ACTIVO: false
+RECORDATORIOS_HORARIO_INICIO: 8
+RECORDATORIOS_HORARIO_FIN: 21
+
+# ═══════════════════════════════════════════════
+# CONFIGURACIÓN DE OUTBOUND AUTOMÁTICO A INACTIVOS (Feature 2)
+# ═══════════════════════════════════════════════
+# Cuando está activo, el scheduler manda plantilla de seguimiento sola
+# (sin esperar comando admin) a clientes con >24h sin responder. Default
+# OFF — Eduardo lo enciende cliente por cliente cuando confirma que la
+# plantilla está aprobada y el quality rating del número es alto.
+OUTBOUND_AUTOMATICO_ACTIVO: false

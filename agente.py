@@ -17,7 +17,7 @@ import logging
 import threading
 import itertools
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 
@@ -48,7 +48,9 @@ BOT_PHONE = os.environ.get("BOT_PHONE", "525631832858")
 CONVERSACIONES_DIR = DATA_DIR / "conversaciones"
 LEADS_DIR = DATA_DIR / "leads"
 PERFILES_DIR = DATA_DIR / "perfiles"
-for d in (CONVERSACIONES_DIR, LEADS_DIR, PERFILES_DIR):
+CITAS_DIR = DATA_DIR / "citas"
+CITAS_ARCHIVO_DIR = CITAS_DIR / "archivo"
+for d in (CONVERSACIONES_DIR, LEADS_DIR, PERFILES_DIR, CITAS_DIR, CITAS_ARCHIVO_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 MAX_HISTORIAL = 50
@@ -1036,6 +1038,46 @@ CAPTURA DE LEAD (INTERNO — IMPORTANTE):
 - Si falta alguno de los 3 datos, NO uses el tag todavía. Pídelo de forma natural,
   uno a la vez, cuando corresponda.
 
+═══════════════════════════════════════════════
+RESPUESTA A RECORDATORIO DE CITA (CRÍTICO)
+═══════════════════════════════════════════════
+
+Cuando el sistema te inyecta un [CONTEXTO INTERNO: el cliente tiene
+una cita pendiente el {{fecha}} a las {{hora}}…], significa que el
+cliente ya recibió o está por recibir un recordatorio automático de su
+cita. Tu respuesta en ese turno debe detectar lo que el cliente quiere
+hacer con esa cita y emitir el tag correspondiente AL FINAL en línea
+sola. El event_id viene en el contexto interno — úsalo exacto.
+
+REGLA: solo emite el tag si el cliente realmente menciona la cita o
+responde claramente al recordatorio. Si el cliente está hablando de
+otra cosa, IGNORA el contexto interno y sigue normal sin emitir tag.
+
+Casos:
+
+1. CONFIRMA ("ahí estaré", "confirmo", "sí, va", "perfecto, llego",
+   "ok nos vemos"):
+     Emite: [CITA_CONFIRMADA: event_id=ABC123]
+     Responde cálido: "Perfecto, lo esperamos a las X."
+
+2. CANCELA sin reagendar ("ya no podré ir", "cancelo", "no puedo",
+   "tengo que cancelar"):
+     Emite: [CITA_CANCELADA: event_id=ABC123]
+     Responde: "Entendido, gracias por avisar. Le aviso a Eduardo
+     para que sepa. Cuando guste podemos buscar otra fecha."
+
+3. PIDE REAGENDAR ("¿podemos cambiar la fecha?", "lo movemos para
+   otro día", "¿se puede pasar al jueves?"):
+     Emite: [CITA_REAGENDAR: event_id=ABC123]
+     Y en el mismo turno empieza el flujo normal de [CALENDARIO:
+     CONSULTAR:YYYY-MM-DD] preguntando qué día le acomoda.
+
+4. RESPUESTA AMBIGUA ("ya veré", "déjeme checar"):
+     NO emitas tag. Responde natural y espera más claridad.
+
+NUNCA muestres el event_id ni el tag al cliente — son internos. Si
+no tienes event_id en el contexto, NO emitas tag.
+
 Tu objetivo final: calificar al prospecto, generar confianza y conseguir
 que acepte una CITA con Eduardo — presencial en Mérida si está cerca, o
 por Zoom/Meet si está fuera. NO ofrezcas una "demo" separada; tú ya eres
@@ -1116,7 +1158,10 @@ def _parse_negocio(texto: str) -> dict[str, str]:
     campos = {"nombre": "", "tipo": "", "direccion": "", "telefono": "",
               "horario": "", "web": "", "instagram": "",
               "agenda_dias": "", "agenda_hora_inicio": "",
-              "agenda_hora_fin": ""}
+              "agenda_hora_fin": "",
+              "recordatorios_24h_activo": "", "recordatorios_2h_activo": "",
+              "recordatorios_horario_inicio": "", "recordatorios_horario_fin": "",
+              "outbound_automatico_activo": ""}
     mapeo = {
         "NOMBRE": "nombre",
         "TIPO": "tipo",
@@ -1131,6 +1176,11 @@ def _parse_negocio(texto: str) -> dict[str, str]:
         "AGENDA_DÍAS": "agenda_dias",
         "AGENDA_HORA_INICIO": "agenda_hora_inicio",
         "AGENDA_HORA_FIN": "agenda_hora_fin",
+        "RECORDATORIOS_24H_ACTIVO": "recordatorios_24h_activo",
+        "RECORDATORIOS_2H_ACTIVO": "recordatorios_2h_activo",
+        "RECORDATORIOS_HORARIO_INICIO": "recordatorios_horario_inicio",
+        "RECORDATORIOS_HORARIO_FIN": "recordatorios_horario_fin",
+        "OUTBOUND_AUTOMATICO_ACTIVO": "outbound_automatico_activo",
     }
     for linea in texto.splitlines():
         if ":" not in linea:
@@ -1140,6 +1190,13 @@ def _parse_negocio(texto: str) -> dict[str, str]:
         if k in mapeo:
             campos[mapeo[k]] = valor.strip()
     return campos
+
+
+def _parse_bool(s: str, default: bool = False) -> bool:
+    """Acepta true/false/1/0/sí/no/yes/no en cualquier case."""
+    if not s:
+        return default
+    return s.strip().lower() in {"true", "1", "sí", "si", "yes", "y", "on"}
 
 
 # Config de agenda cacheada por proceso (negocio.txt casi no cambia en
@@ -1227,6 +1284,32 @@ def obtener_agenda_config() -> dict:
         "horario_texto": f"{h_ini:02d}:00 a {h_fin:02d}:00",
     }
     _AGENDA_CONFIG_CACHE = cfg
+    return cfg
+
+
+_RECORDATORIOS_CONFIG_CACHE: dict | None = None
+
+
+def obtener_recordatorios_config() -> dict:
+    """Devuelve config de recordatorios pre-cita y outbound automático.
+    Fuente: campos RECORDATORIOS_* y OUTBOUND_* en negocio.txt.
+    Defaults conservadores: 24h ON, 2h OFF, horario 8-21, outbound OFF.
+    """
+    global _RECORDATORIOS_CONFIG_CACHE
+    if _RECORDATORIOS_CONFIG_CACHE is not None:
+        return _RECORDATORIOS_CONFIG_CACHE
+    try:
+        neg = _parse_negocio(_leer_archivo("negocio.txt"))
+    except Exception:
+        neg = {}
+    cfg = {
+        "rec_24h_activo": _parse_bool(neg.get("recordatorios_24h_activo", ""), True),
+        "rec_2h_activo": _parse_bool(neg.get("recordatorios_2h_activo", ""), False),
+        "horario_inicio": _parse_hora(neg.get("recordatorios_horario_inicio", ""), 8),
+        "horario_fin": _parse_hora(neg.get("recordatorios_horario_fin", ""), 21),
+        "outbound_activo": _parse_bool(neg.get("outbound_automatico_activo", ""), False),
+    }
+    _RECORDATORIOS_CONFIG_CACHE = cfg
     return cfg
 
 
@@ -1371,14 +1454,57 @@ def _contexto_fecha_actual() -> str:
 # Gemini
 # ─────────────────────────────────────────────────────────────
 
+def _contexto_cita_pendiente(phone: str) -> str:
+    """Si el cliente tiene cita activa (agendada/confirmada) futura, inyecta
+    un bloque al system_instruction con los datos. El modelo lo usa para:
+      - detectar si el cliente confirma, cancela o pide reagendar
+      - emitir los tags [CITA_CONFIRMADA] / [CITA_CANCELADA] / [CITA_REAGENDAR]
+        con el event_id correcto
+    Si no hay cita activa, retorna string vacío."""
+    if not phone:
+        return ""
+    try:
+        res = _buscar_cita_activa(phone)
+    except Exception:
+        log.exception("[CITA] Error buscando cita activa para inyección")
+        return ""
+    if not res:
+        return ""
+    _, cita = res
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(CAL_TIMEZONE)
+        fl = datetime.fromisoformat(
+            cita["fecha_cita_utc"].replace("Z", "+00:00")
+        ).astimezone(tz).replace(tzinfo=None)
+        fecha_str = _formato_fecha_es(fl)
+        hora_str = _formato_hora_es(fl)
+    except Exception:
+        return ""
+    event_id = cita.get("calendar_event_id", "")
+    return (
+        f"\n\n[CONTEXTO INTERNO: el cliente tiene una cita pendiente el "
+        f"{fecha_str} a las {hora_str} (motivo: {cita.get('motivo', '?')}). "
+        f"Si en este turno el cliente CONFIRMA su asistencia, emite al "
+        f"final: [CITA_CONFIRMADA: event_id={event_id}]. Si CANCELA sin "
+        f"reagendar, emite: [CITA_CANCELADA: event_id={event_id}]. Si pide "
+        f"REAGENDAR (cambiar fecha/hora), emite: [CITA_REAGENDAR: "
+        f"event_id={event_id}] y empieza el flujo normal de [CALENDARIO:"
+        f"CONSULTAR:...]. Si NO menciona la cita, ignora este contexto y "
+        f"sigue la conversación normal. NUNCA muestres el event_id al "
+        f"cliente — es interno.]"
+    )
+
+
 def _build_model(phone: str | None = None) -> genai.GenerativeModel:
-    # Inyectamos fecha actual + tipo de cliente en cada llamada. Así
-    # Gemini tiene contexto temporal y sabe en qué etapa del embudo está
-    # este prospecto específico. Ambos cambian por turno/por usuario.
+    # Inyectamos fecha actual + tipo de cliente + cita pendiente (si hay)
+    # en cada llamada. Así Gemini tiene contexto temporal, sabe en qué
+    # etapa del embudo está este prospecto y sabe si tiene cita activa.
     system_instruction = (
         SYSTEM_PROMPT_CACHED
         + _contexto_fecha_actual()
         + (_contexto_tipo_cliente(phone) if phone else "")
+        + (_contexto_cita_pendiente(phone) if phone else "")
         + (email_lead.contexto_para_prompt(SEGUIMIENTO_DIR, normalizar_numero(phone))
            if phone else "")
     )
@@ -2025,8 +2151,12 @@ def consultar_disponibilidad(fecha: str) -> list[str]:
 def agendar_cita(
     fecha: str, hora: str, nombre: str, telefono: str, motivo: str,
     tentative: bool = True,
-) -> bool:
-    """Crea un evento de 1 hora en el calendario. Devuelve True si se creó.
+) -> str | None:
+    """Crea un evento de 1 hora en el calendario.
+
+    Retorna el `event_id` de Google Calendar si se creó, o `None` si falló.
+    (Antes retornaba bool; los callers que hacen `if ok:` siguen funcionando
+    porque str truthy = True y None = False.)
 
     tentative=True (default, flujo prospecto): se crea como 'tentative' y con
     prefijo [SOLICITUD] en el summary, para que Eduardo la apruebe o pivotee.
@@ -2037,15 +2167,15 @@ def agendar_cita(
         from zoneinfo import ZoneInfo
     except Exception:
         log.exception("zoneinfo no disponible")
-        return False
+        return None
     svc = _calendar_service()
     if svc is None:
-        return False
+        return None
     try:
         y, m, d = map(int, fecha.split("-"))
         hh, mm = map(int, hora.split(":"))
     except Exception:
-        return False
+        return None
     tz = ZoneInfo(CAL_TIMEZONE)
     inicio = datetime(y, m, d, hh, mm, tzinfo=tz)
     fin = inicio + timedelta(hours=1)
@@ -2076,11 +2206,294 @@ def agendar_cita(
         "end": {"dateTime": fin.isoformat(), "timeZone": CAL_TIMEZONE},
     }
     try:
-        svc.events().insert(calendarId=GOOGLE_CALENDAR_ID, body=evento).execute()
-        return True
+        creado = svc.events().insert(calendarId=GOOGLE_CALENDAR_ID, body=evento).execute()
+        return creado.get("id")
     except Exception:
         log.exception("Error insertando evento en Google Calendar")
+        return None
+
+
+# ─────────────────────────────────────────────────────────────
+# Persistencia de citas + recordatorios automáticos pre-cita
+# ─────────────────────────────────────────────────────────────
+# Cuando se crea evento en Calendar (admin o prospecto), guardamos un JSON
+# en CITAS_DIR con metadata necesaria para mandar recordatorios. El
+# scheduler revisa cada 5 min y dispara plantilla Meta 24h/2h antes según
+# config.
+
+PLANTILLA_RECORDATORIO_24H = os.environ.get(
+    "PLANTILLA_RECORDATORIO_24H", "recordatorio_cita_24h_marz_v1"
+)
+PLANTILLA_RECORDATORIO_2H = os.environ.get(
+    "PLANTILLA_RECORDATORIO_2H", "recordatorio_cita_2h_marz_v1"
+)
+PLANTILLA_RECORDATORIO_LANG = os.environ.get("PLANTILLA_RECORDATORIO_LANG", "es_MX")
+
+RECORDATORIOS_INTERVAL_SEC = 300  # 5 min
+# Ventanas: cuánto antes de la cita disparar cada recordatorio (en segundos).
+# Margen amplio porque el scheduler corre cada 5 min y Railway puede tener
+# pequeños lapsos sin tick (deploy, OOM, etc.). El flag anti-doble-envío
+# evita duplicados aunque el scheduler corra varias veces dentro de la ventana.
+REC_24H_VENTANA_MIN_S = 23 * 3600  # 23h
+REC_24H_VENTANA_MAX_S = 25 * 3600  # 25h
+REC_2H_VENTANA_MIN_S = 1 * 3600     # 1h
+REC_2H_VENTANA_MAX_S = 3 * 3600     # 3h
+CITA_PASADA_HORAS = 2               # marcar completada si pasó +2h
+CITA_ARCHIVAR_DESPUES_DIAS = 30
+
+
+def _cita_path(phone: str, event_id: str) -> Path:
+    return CITAS_DIR / f"{normalizar_numero(phone)}_{event_id}.json"
+
+
+def _persistir_cita(
+    phone: str, nombre: str, fecha: str, hora: str,
+    event_id: str, motivo: str = "",
+) -> Path | None:
+    """Crea archivo JSON con metadata de la cita para que el scheduler
+    de recordatorios pueda dispararlos. Llamar inmediatamente después de
+    que agendar_cita devuelva un event_id válido.
+
+    fecha: 'YYYY-MM-DD'. hora: 'HH:MM'.
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(CAL_TIMEZONE)
+        y, m, d = map(int, fecha.split("-"))
+        hh, mm = map(int, hora.split(":"))
+        fecha_local = datetime(y, m, d, hh, mm, tzinfo=tz)
+        fecha_utc = fecha_local.astimezone(timezone.utc).replace(tzinfo=None)
+    except Exception:
+        log.exception("[CITA] Error parseando fecha/hora al persistir")
+        return None
+    data = {
+        "phone": phone,
+        "nombre": nombre,
+        "fecha_cita_utc": fecha_utc.isoformat() + "Z",
+        "fecha_cita_local": fecha_local.isoformat(),
+        "calendar_event_id": event_id,
+        "motivo": motivo,
+        "recordatorio_24h_enviado": False,
+        "recordatorio_2h_enviado": False,
+        "estado": "agendada",
+        "creada_ts": datetime.utcnow().isoformat() + "Z",
+    }
+    path = _cita_path(phone, event_id)
+    try:
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        log.info("[CITA] persistida %s para %s (%s %s)",
+                 event_id[:12], phone, fecha, hora)
+        return path
+    except Exception:
+        log.exception("[CITA] Error escribiendo %s", path)
+        return None
+
+
+def _cargar_cita(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _actualizar_cita(path: Path, cita: dict) -> None:
+    try:
+        path.write_text(
+            json.dumps(cita, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("[CITA] Error actualizando %s", path)
+
+
+def _buscar_cita_activa(phone: str) -> tuple[Path, dict] | None:
+    """Devuelve la cita 'agendada' o 'confirmada' más próxima a futuro para
+    este número. Si hay varias, la más cercana en el tiempo. Si no hay,
+    None."""
+    phone_norm = normalizar_numero(phone)
+    candidatas: list[tuple[datetime, Path, dict]] = []
+    try:
+        for f in CITAS_DIR.glob(f"{phone_norm}_*.json"):
+            cita = _cargar_cita(f)
+            if not cita or cita.get("estado") not in ("agendada", "confirmada"):
+                continue
+            try:
+                fecha = datetime.fromisoformat(
+                    cita["fecha_cita_utc"].replace("Z", "+00:00")
+                ).replace(tzinfo=None)
+            except Exception:
+                continue
+            candidatas.append((fecha, f, cita))
+    except Exception:
+        log.exception("[CITA] Error buscando cita activa de %s", phone)
+        return None
+    ahora = datetime.utcnow()
+    futuras = [(f, p, c) for (f, p, c) in candidatas if f >= ahora]
+    if not futuras:
+        return None
+    futuras.sort(key=lambda x: x[0])
+    _, path, cita = futuras[0]
+    return path, cita
+
+
+def _formato_fecha_es(dt: datetime) -> str:
+    """'viernes 13 de junio' (sin año si es este año, con año si otro)."""
+    dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio",
+             "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    nombre_dia = dias[dt.weekday()]
+    nombre_mes = meses[dt.month - 1]
+    base = f"{nombre_dia} {dt.day} de {nombre_mes}"
+    if dt.year != datetime.utcnow().year:
+        base += f" de {dt.year}"
+    return base
+
+
+def _formato_hora_es(dt: datetime) -> str:
+    """'10:00 am' / '5:30 pm' en estilo conversacional."""
+    h = dt.hour
+    m = dt.minute
+    sufijo = "am" if h < 12 else "pm"
+    h12 = h % 12
+    if h12 == 0:
+        h12 = 12
+    if m == 0:
+        return f"{h12}:00 {sufijo}"
+    return f"{h12}:{m:02d} {sufijo}"
+
+
+def _enviar_recordatorio_cita(
+    path: Path, cita: dict, tipo: str, nombre_negocio: str,
+) -> bool:
+    """Envía plantilla Meta de recordatorio (24h o 2h) y marca el flag
+    en el JSON de la cita. Devuelve True si Meta aceptó el envío."""
+    if tipo not in ("24h", "2h"):
         return False
+    plantilla = (PLANTILLA_RECORDATORIO_24H if tipo == "24h"
+                 else PLANTILLA_RECORDATORIO_2H)
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(CAL_TIMEZONE)
+        fecha_local = datetime.fromisoformat(
+            cita["fecha_cita_utc"].replace("Z", "+00:00")
+        ).astimezone(tz).replace(tzinfo=None)
+    except Exception:
+        log.exception("[REC] Error parseando fecha de cita %s", cita.get("calendar_event_id"))
+        return False
+    fecha_str = _formato_fecha_es(fecha_local)
+    hora_str = _formato_hora_es(fecha_local)
+    nombre = cita.get("nombre", "") or "cliente"
+    if tipo == "24h":
+        params = [nombre, fecha_str, hora_str, nombre_negocio]
+    else:
+        params = [nombre, hora_str, nombre_negocio]
+    from_e164 = "+" + normalizar_numero(BOT_PHONE or "525631832858")
+    to_e164 = "+" + normalizar_numero(cita["phone"])
+    try:
+        ok, err = ycloud_enviar_plantilla(
+            from_e164, to_e164,
+            template_name=plantilla,
+            lang_code=PLANTILLA_RECORDATORIO_LANG,
+            params=params,
+        )
+    except Exception as e:
+        log.exception("[REC] Excepción enviando plantilla %s a %s", plantilla, to_e164)
+        return False
+    if not ok:
+        log.error("[REC] %s falló a %s: %s", plantilla, to_e164, err)
+        return False
+    cita[f"recordatorio_{tipo}_enviado"] = True
+    cita[f"recordatorio_{tipo}_ts"] = datetime.utcnow().isoformat() + "Z"
+    _actualizar_cita(path, cita)
+    log.info("[REC] %s enviado a %s (%s)", tipo, nombre, to_e164)
+    return True
+
+
+def _verificar_recordatorios() -> None:
+    """Revisa CITAS_DIR. Por cada cita 'agendada'/'confirmada':
+      - si delta(fecha_cita - ahora) cae en ventana 24h → manda recordatorio_24h.
+      - si delta cae en ventana 2h → manda recordatorio_2h.
+      - si delta < -CITA_PASADA_HORAS → marca 'completada'.
+      - si la cita pasó hace > CITA_ARCHIVAR_DESPUES_DIAS → mueve a archivo/.
+    Respeta config por negocio (flags activos + horario permitido en TZ local).
+    """
+    try:
+        cfg = obtener_recordatorios_config()
+    except Exception:
+        log.exception("[REC] Error cargando config")
+        return
+    if not (cfg["rec_24h_activo"] or cfg["rec_2h_activo"]):
+        return
+    try:
+        from zoneinfo import ZoneInfo
+        tz_local = ZoneInfo(CAL_TIMEZONE)
+        hora_local = datetime.now(tz_local).hour
+    except Exception:
+        hora_local = datetime.utcnow().hour  # fallback degradado
+    en_horario = cfg["horario_inicio"] <= hora_local < cfg["horario_fin"]
+    # Si estamos fuera de horario permitido, no mandamos nada (pero igual
+    # marcamos completadas y archivamos, eso no molesta a nadie).
+
+    try:
+        neg = _parse_negocio(_leer_archivo("negocio.txt"))
+        nombre_negocio = neg.get("nombre") or "Marz"
+    except Exception:
+        nombre_negocio = "Marz"
+
+    ahora = datetime.utcnow()
+    try:
+        archivos = list(CITAS_DIR.glob("*.json"))
+    except Exception:
+        log.exception("[REC] Error listando CITAS_DIR")
+        return
+
+    for f in archivos:
+        cita = _cargar_cita(f)
+        if not cita:
+            continue
+        estado = cita.get("estado", "")
+        if estado not in ("agendada", "confirmada"):
+            # Cancelada / completada / dormida: archivar si ya pasó tiempo.
+            if estado in ("cancelada", "completada"):
+                try:
+                    fecha = datetime.fromisoformat(
+                        cita["fecha_cita_utc"].replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
+                    if (ahora - fecha).days >= CITA_ARCHIVAR_DESPUES_DIAS:
+                        f.rename(CITAS_ARCHIVO_DIR / f.name)
+                except Exception:
+                    pass
+            continue
+        try:
+            fecha = datetime.fromisoformat(
+                cita["fecha_cita_utc"].replace("Z", "+00:00")
+            ).replace(tzinfo=None)
+        except Exception:
+            continue
+        delta_s = (fecha - ahora).total_seconds()
+
+        # Cita pasada: marcar completada.
+        if delta_s < -CITA_PASADA_HORAS * 3600:
+            cita["estado"] = "completada"
+            _actualizar_cita(f, cita)
+            continue
+
+        # 24h
+        if (cfg["rec_24h_activo"]
+                and not cita.get("recordatorio_24h_enviado")
+                and REC_24H_VENTANA_MIN_S <= delta_s <= REC_24H_VENTANA_MAX_S
+                and en_horario):
+            _enviar_recordatorio_cita(f, cita, "24h", nombre_negocio)
+
+        # 2h
+        if (cfg["rec_2h_activo"]
+                and not cita.get("recordatorio_2h_enviado")
+                and REC_2H_VENTANA_MIN_S <= delta_s <= REC_2H_VENTANA_MAX_S
+                and en_horario):
+            _enviar_recordatorio_cita(f, cita, "2h", nombre_negocio)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2100,6 +2513,15 @@ COMPETIDOR_RE = re.compile(
 )
 PERDIDA_RE = re.compile(
     r"\[PERDIDA:\s*razon\s*=\s*([a-z_]+)\s*\]", re.IGNORECASE,
+)
+CITA_CONFIRMADA_RE = re.compile(
+    r"\[CITA_CONFIRMADA:\s*event_id\s*=\s*([^\]\s]+)\s*\]", re.IGNORECASE,
+)
+CITA_CANCELADA_RE = re.compile(
+    r"\[CITA_CANCELADA:\s*event_id\s*=\s*([^\]\s]+)\s*\]", re.IGNORECASE,
+)
+CITA_REAGENDAR_RE = re.compile(
+    r"\[CITA_REAGENDAR:\s*event_id\s*=\s*([^\]\s]+)\s*\]", re.IGNORECASE,
 )
 REFERIDO_RE = re.compile(
     r"\[REFERIDO:\s*([^\]]+)\]", re.IGNORECASE,
@@ -2348,6 +2770,27 @@ def _extraer_referido(texto: str) -> tuple[str, dict | None]:
     return REFERIDO_RE.sub("", texto).strip(), datos
 
 
+def _extraer_cita_confirmada(texto: str) -> tuple[str, str | None]:
+    m = CITA_CONFIRMADA_RE.search(texto)
+    if not m:
+        return texto, None
+    return CITA_CONFIRMADA_RE.sub("", texto).strip(), m.group(1).strip()
+
+
+def _extraer_cita_cancelada(texto: str) -> tuple[str, str | None]:
+    m = CITA_CANCELADA_RE.search(texto)
+    if not m:
+        return texto, None
+    return CITA_CANCELADA_RE.sub("", texto).strip(), m.group(1).strip()
+
+
+def _extraer_cita_reagendar(texto: str) -> tuple[str, str | None]:
+    m = CITA_REAGENDAR_RE.search(texto)
+    if not m:
+        return texto, None
+    return CITA_REAGENDAR_RE.sub("", texto).strip(), m.group(1).strip()
+
+
 def notificar_alerta_precio(phone: str) -> None:
     """Un flag por conversación, evita spam si el cliente cuestiona varias veces."""
     seg_path = SEGUIMIENTO_DIR / f"{normalizar_numero(phone)}_alerta_precio.flag"
@@ -2391,6 +2834,78 @@ def notificar_escalacion(phone: str) -> None:
         f"El prospecto pidió hablar con una persona o muestra frustración. "
         f"Escríbele directo cuanto antes."
     )
+
+
+def _aplicar_cita_confirmada(phone: str, event_id: str) -> None:
+    """Marca la cita como 'confirmada' en CITAS_DIR. Solo log, sin alerta
+    al owner (no requiere acción)."""
+    path = _cita_path(phone, event_id)
+    cita = _cargar_cita(path)
+    if not cita:
+        log.warning("[CITA] CONFIRMADA event_id=%s no encontrada para %s",
+                    event_id[:12], phone)
+        return
+    if cita.get("estado") == "confirmada":
+        return
+    cita["estado"] = "confirmada"
+    cita["confirmada_ts"] = datetime.utcnow().isoformat() + "Z"
+    _actualizar_cita(path, cita)
+    log.info("[CITA] confirmada por cliente: %s (%s)", event_id[:12], phone)
+
+
+def _aplicar_cita_cancelada(phone: str, event_id: str) -> None:
+    """Marca la cita como 'cancelada' y avisa a Eduardo para que reagende
+    o reasigne el slot. Esta SÍ requiere acción humana."""
+    path = _cita_path(phone, event_id)
+    cita = _cargar_cita(path)
+    if cita:
+        cita["estado"] = "cancelada"
+        cita["cancelada_ts"] = datetime.utcnow().isoformat() + "Z"
+        _actualizar_cita(path, cita)
+    perfil = _perfil_cliente(phone)
+    nombre = (cita or {}).get("nombre") or perfil.get("nombre", phone)
+    fecha_str = "?"
+    try:
+        if cita:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(CAL_TIMEZONE)
+            fl = datetime.fromisoformat(
+                cita["fecha_cita_utc"].replace("Z", "+00:00")
+            ).astimezone(tz).replace(tzinfo=None)
+            fecha_str = f"{_formato_fecha_es(fl)} a las {_formato_hora_es(fl)}"
+    except Exception:
+        pass
+    _notificar_owner(
+        f"❌ CITA CANCELADA por cliente\n"
+        f"Nombre: {nombre}\n"
+        f"Número: {phone}\n"
+        f"Cita original: {fecha_str}\n"
+        f"Event ID: {event_id[:20]}\n"
+        f"Considera quitarla de tu Calendar y proponerle reagendar."
+    )
+    log.info("[CITA] cancelada por cliente: %s (%s)", event_id[:12], phone)
+
+
+def _aplicar_cita_reagendar(phone: str, event_id: str) -> None:
+    """Cliente pide reagendar: marca como 'cancelada' (el LLM ofrece nuevas
+    opciones en mismo turno vía flujo normal de [CALENDARIO:CONSULTAR])."""
+    path = _cita_path(phone, event_id)
+    cita = _cargar_cita(path)
+    if cita:
+        cita["estado"] = "cancelada"
+        cita["cancelada_ts"] = datetime.utcnow().isoformat() + "Z"
+        cita["razon_cancelacion"] = "reagendar"
+        _actualizar_cita(path, cita)
+    perfil = _perfil_cliente(phone)
+    nombre = (cita or {}).get("nombre") or perfil.get("nombre", phone)
+    _notificar_owner(
+        f"🔁 CITA EN REAGENDADO\n"
+        f"Nombre: {nombre}\n"
+        f"Número: {phone}\n"
+        f"El cliente está eligiendo nueva fecha con el bot. Quita la cita "
+        f"vieja de tu Calendar (event_id={event_id[:20]})."
+    )
+    log.info("[CITA] reagendar pedido por cliente: %s (%s)", event_id[:12], phone)
 
 
 def notificar_competidor(phone: str, datos: dict) -> None:
@@ -2583,6 +3098,23 @@ def _scheduler_loop() -> None:
 # Iniciar scheduler como daemon thread
 _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
 _scheduler_thread.start()
+
+
+def _recordatorios_loop() -> None:
+    """Corre cada RECORDATORIOS_INTERVAL_SEC revisando citas activas para
+    disparar recordatorios 24h y 2h antes. Separado del scheduler principal
+    para no acoplar la cadencia (recordatorios necesitan granularidad fina;
+    backup/seguimientos no)."""
+    while True:
+        time.sleep(RECORDATORIOS_INTERVAL_SEC)
+        try:
+            _verificar_recordatorios()
+        except Exception:
+            log.exception("[REC] Error en recordatorios_loop")
+
+
+_recordatorios_thread = threading.Thread(target=_recordatorios_loop, daemon=True)
+_recordatorios_thread.start()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -4099,16 +4631,20 @@ def _procesar_calendar_admin(respuesta: str) -> str:
         nombre = m_ag.group(3).strip()
         motivo = m_ag.group(4).strip()
         try:
-            ok = agendar_cita(
+            event_id = agendar_cita(
                 fecha, hora, nombre, OWNER_PHONE or "", motivo,
                 tentative=False,
             )
         except Exception:
             log.exception("[ADMIN][CAL] Error agendando cita")
-            ok = False
-        if ok:
+            event_id = None
+        if event_id:
             confirmacion = (f"\n\n✅ Cita agendada en Google Calendar: "
                             f"{nombre} — {fecha} a las {hora} ({motivo}).")
+            # Nota: el flujo admin agenda en Calendar de Eduardo pero NO
+            # persiste cita en CITAS_DIR porque no hay phone-cliente
+            # asociado en este flujo (Eduardo agenda contra OWNER_PHONE).
+            # Los recordatorios automáticos sólo aplican al flujo prospecto.
         else:
             confirmacion = (f"\n\n❌ No pude agendar en Google Calendar "
                             f"({fecha} {hora}). Revisa que las credenciales "
@@ -5188,12 +5724,20 @@ def _run_llm_pipeline(from_number: str, to_number: str,
                 from_number, ctx_busy, n_contexto=CONTEXTO_EXTENDIDO
             )
         else:
-            ok = agendar_cita(fecha_ag, hora_ag, nombre_ag, from_number, motivo_ag)
-            if ok:
+            event_id = agendar_cita(fecha_ag, hora_ag, nombre_ag, from_number, motivo_ag)
+            if event_id:
                 cita_agendada = {
                     "fecha": fecha_ag, "hora": hora_ag,
                     "nombre": nombre_ag, "motivo": motivo_ag,
                 }
+                # Persistir cita para que el scheduler dispare recordatorios.
+                try:
+                    _persistir_cita(
+                        from_number, nombre_ag, fecha_ag, hora_ag,
+                        event_id, motivo_ag,
+                    )
+                except Exception:
+                    log.exception("[CITA] No pude persistir cita post-agendado")
             else:
                 log.warning("[CAL] agendar_cita falló: %s %s %s",
                             fecha_ag, hora_ag, nombre_ag)
@@ -5264,6 +5808,30 @@ def _run_llm_pipeline(from_number: str, to_number: str,
             notificar_referido(from_number, datos_referido)
         except Exception:
             log.exception("Error en notificar_referido")
+
+    # Tags de cita (Feature 1 — recordatorios automáticos). El modelo emite
+    # uno de estos cuando el cliente confirma, cancela o pide reagendar su
+    # cita ya agendada. event_id viene del [CONTEXTO INTERNO] inyectado.
+    respuesta, ev_confirm = _extraer_cita_confirmada(respuesta)
+    if ev_confirm:
+        try:
+            _aplicar_cita_confirmada(from_number, ev_confirm)
+        except Exception:
+            log.exception("Error en _aplicar_cita_confirmada")
+
+    respuesta, ev_cancel = _extraer_cita_cancelada(respuesta)
+    if ev_cancel:
+        try:
+            _aplicar_cita_cancelada(from_number, ev_cancel)
+        except Exception:
+            log.exception("Error en _aplicar_cita_cancelada")
+
+    respuesta, ev_reag = _extraer_cita_reagendar(respuesta)
+    if ev_reag:
+        try:
+            _aplicar_cita_reagendar(from_number, ev_reag)
+        except Exception:
+            log.exception("Error en _aplicar_cita_reagendar")
 
     # Red final: sanitizer defensivo. Cero leaks de tags/variables al
     # cliente, pase lo que pase con Gemini.
