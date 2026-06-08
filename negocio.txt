@@ -1,11 +1,15 @@
 NOMBRE: Marz
-TIPO: Agencia de automatización e inteligencia artificial
+TIPO: Agencia de automatización e inteligencia artificial (chatbots de WhatsApp + automatizaciones)
 DIRECCIÓN: Mérida, Yucatán, México
 TELÉFONO: +52 56 3183 2858
 HORARIO: El bot responde 24/7. No hay horario fijo de asesores. Horario disponible para AGENDAR llamadas: Lunes a Viernes 15:00-20:00 (CDT). Fines de semana: el prospecto debe coordinar directamente con un asesor por mensaje.
 WEB: marz.mx
 DUEÑO: Eduardo Mares Gutiérrez (único dueño)
-NOTAS: Agencia enfocada en negocios locales de Mérida (salones, barberías, consultorios médicos y dentales, veterinarias, restaurantes). Operamos remoto — las llamadas son por Google Meet o Zoom. Coexistencia con WhatsApp normal del dueño.
+NOTAS: Operamos remoto — las llamadas son por Google Meet o Zoom (presencial si el prospecto está en Mérida). Coexistencia con WhatsApp normal del dueño.
+
+POSICIONAMIENTO: Solución profesional para clínicas establecidas y empresas medianas. No competimos por precio.
+
+NO_SCOPE: Marz NO vende: PWAs ni apps móviles como producto separado; software a la medida fuera de automatización de procesos; servicios de marketing, contenido o redes sociales; consultoría de negocio aislada sin producto.
 
 # ═══════════════════════════════════════════════
 # CONFIGURACIÓN DE AGENDA (usada por el motor de citas)

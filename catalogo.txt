@@ -1,310 +1,352 @@
 # Catálogo oficial de Marz
-# Todos los precios en pesos mexicanos (MXN), sin IVA salvo indicación.
-# El bot SOLO puede ofrecer lo que aparece aquí. NUNCA inventa precios fuera de estas tablas.
+# Fuente única de verdad de productos, precios y FAQs.
+# El bot SOLO puede ofrecer lo que aparece aquí. NUNCA inventa precios
+# fuera de estas tablas. Cuando hay duda, escala a Eduardo.
 
 ═══════════════════════════════════════════════════════════
-ESTRUCTURA DE PRECIOS: FUNDADOR + NORMAL
+FILOSOFÍA DE PRECIOS
 ═══════════════════════════════════════════════════════════
-Tenemos 2 precios por paquete:
-- FUNDADOR (mes 1-3): para los primeros 10 clientes que entran.
-- NORMAL (mes 4+): a partir del cuarto mes el cliente sube a
-  precio normal, y todos los clientes nuevos que lleguen DESPUÉS
-  de cerrar la cohorte fundadora entran directo a precio normal.
+Marz NO publica precios fijos al centavo. Los rangos por tier que
+aparecen abajo son orientativos. El precio exacto lo confirma Eduardo
+en llamada, después de entender el caso del cliente.
 
-El setup es un pago único al inicio, mismo monto en fundador y normal.
-
-─────────────────────────────────────────────────────────
-TIER 1: CHATBOT ESENCIAL
-─────────────────────────────────────────────────────────
-Setup:                 $2,200 MXN (pago único)
-Mensualidad fundador:  $2,200 MXN / mes (mes 1-3)
-Mensualidad normal:    $3,000 MXN / mes (mes 4+)
-
-Incluye:
-- Bot con IA que responde 24/7 lo que sea.
-- Convive con el WhatsApp normal del dueño.
-- Entiende texto, notas de voz e imágenes.
-
-Ideal para: consultorio de un dentista solo, barbería de una silla,
-tienda chica, cualquier negocio que solo quiere responder FAQs y no
-perder clientes por no contestar.
-
-─────────────────────────────────────────────────────────
-TIER 2: CHATBOT PRO (default si dudas qué recomendar)
-─────────────────────────────────────────────────────────
-Setup:                 $2,200 MXN (pago único)
-Mensualidad fundador:  $3,500 MXN / mes (mes 1-3)
-Mensualidad normal:    $5,000 MXN / mes (mes 4+)
-
-Incluye:
-- Todo lo de Esencial.
-- Agenda de citas (se conecta a Google Calendar).
-- Recordatorios automáticos a clientes.
-- Métricas y reportes de conversaciones.
-- Seguimiento automático a clientes inactivos.
-
-Ideal para: médicos, dentistas, salones, clínicas, veterinarias,
-spas, despachos, cadenas pequeñas, cualquier negocio donde la agenda
-es el corazón y donde las métricas y el follow-up importan.
-
-─────────────────────────────────────────────────────────
-TIER 3: APP PERSONALIZADA
-─────────────────────────────────────────────────────────
-Setup:                 $5,000 MXN (pago único)
-Mensualidad fundador:  $6,500 MXN / mes (mes 1-3)
-Mensualidad normal:    $9,000 MXN / mes (mes 4+)
-
-Incluye:
-- App instalable con la marca del negocio (PWA).
-- Todo lo de Chatbot Pro.
-- Dashboard operativo.
-- Intervención en vivo del equipo del negocio.
-- Asistente de IA interno para el equipo.
-
-Ideal para: negocios más grandes que quieren su propia app con marca
-y dashboard. Presupuesto más alto, volumen alto.
+Reglas para el bot:
+- Nunca tira un número en frío. Primero califica (ver "4 PREGUNTAS").
+- Da rango por tier; nunca cantidad exacta.
+- Default cuando dudas qué tier: Tier 2-Bajo.
+- Si detectas Tier 3 en las primeras 2-3 respuestas: NUNCA cierres
+  precio. Escala a Eduardo y agenda llamada.
+- Frase oficial al cerrar un rango: "Tiene margen arriba y abajo
+  según lo que necesite; lo afinamos en la llamada con Eduardo."
 
 ═══════════════════════════════════════════════════════════
-SERVICIO ADICIONAL: PÁGINAS WEB
+ESTRUCTURA DE TIERS (rangos aproximados en MXN)
 ═══════════════════════════════════════════════════════════
-Marz también diseña y desarrolla páginas web para negocios.
-Hay 2 paquetes con PRECIO FIJO (Nivel 1 y Nivel 2) y opción CUSTOM
-para proyectos ambiciosos. Estamos en fase de lanzamiento: los
-primeros 10 clientes entran a precio de lanzamiento.
 
-Página oficial: marz.mx
+──────────────── TIER 1 — Negocio chico ────────────────
+Ideal para: barbería individual, salón solo, consultorio de 1 doctor,
+lonchería, gym chico, tienda chica.
+Política: atender si llega, NO perseguir.
 
-─────────────────────────────────────────────────────────
-NIVEL 1: LANDING (paquete fijo)
-─────────────────────────────────────────────────────────
-Precio:        $3,500 MXN (pago único, precio de lanzamiento)
-Precio normal: $4,200 MXN (después de los 10 cupos de lanzamiento)
+Bot básico (responde + captura datos):
+  Setup: $4,500 – $5,500    Mensualidad: $3,000 – $3,500
 
-Incluye:
-- Diseño moderno y responsive (mobile, tablet, desktop).
-- Una sola página con Hero + 3-4 secciones.
-- Formulario de contacto + botón WhatsApp directo.
-- Dominio .com (1 año incluido).
-- Hosting + SSL (1 año incluido).
-- Garantía de 15 días sobre bugs técnicos.
-- Entrega en máximo 3 días hábiles.
+Bot + agenda + recordatorios automáticos:
+  Setup: $5,500 – $7,000    Mensualidad: $3,500 – $4,500
 
-Ideal para: consultorios, salones, gestorías, profesionales
-independientes.
+──────────────── TIER 2-Bajo — Sweet spot (CLIENTE OBJETIVO) ────────────────
+Ideal para: clínica con 2 doctores, salón con 2 sucursales, doctor
+saturado individual.
 
-─────────────────────────────────────────────────────────
-NIVEL 2: SITIO WEB COMPLETO (paquete fijo)
-─────────────────────────────────────────────────────────
-Precio:        $6,500 MXN (pago único, precio de lanzamiento)
-Precio normal: $8,200 MXN (después de los 10 cupos de lanzamiento)
+Bot + agenda + recordatorios + métricas:
+  Setup: $6,500 – $9,000    Mensualidad: $5,000 – $6,500
 
-Incluye:
-- Todo lo de Nivel 1.
-- 4-6 secciones (incluye galería o catálogo).
-- Integración con Google Maps.
-- Optimización SEO básica.
-- Dominio .com + hosting + SSL (1 año todo incluido).
-- Garantía de 15 días sobre bugs técnicos.
-- Entrega en máximo 3 días hábiles.
++ seguimiento automático de inactivos + segmentación:
+  Setup: $9,000 – $11,000   Mensualidad: $6,500 – $7,500
 
-Ideal para: constructoras, clínicas con varios servicios,
-restaurantes, comercios con catálogo.
+──────────────── TIER 2-Alto — Clínicas multi-sucursal ────────────────
+Ideal para: clínica con 4-5 doctores, multi-sucursal, IA entrenada
+con info específica del negocio.
 
-─────────────────────────────────────────────────────────
-PROYECTO CUSTOM (cotización individual)
-─────────────────────────────────────────────────────────
-Para ideas más complejas que no caben en los paquetes fijos:
-e-commerce, sitios con varios idiomas, integraciones a CRM, paneles
-internos, reservaciones online, etc.
+Lo anterior + IA entrenada + Calendar avanzada:
+  Setup: $11,000 – $14,500  Mensualidad: $7,500 – $8,500
 
-El bot NO cotiza proyectos custom. Si el prospecto describe algo
-que no entra en Nivel 1 o Nivel 2, escala con [EVENTO:QUIERE_WEB]
-y le dice algo como: "Ese proyecto es custom — para cerrar bien
-esto te paso con Eduardo, él te cotiza a la medida según lo que
-necesites."
++ CRM con IA (memoria profunda, scoring de leads, segmentación
+inteligente, follow-up basado en comportamiento):
+  Setup: $14,500 – $18,500  Mensualidad: $8,500 – $10,000
 
-─────────────────────────────────────────────────────────
-RENOVACIÓN ANUAL (después del primer año)
-─────────────────────────────────────────────────────────
-Precio: $1,500 MXN / año (mismo precio en lanzamiento y normal —
-NO hay precio promocional para la renovación)
+──────────────── TIER 3 — Empresas medianas / grandes ────────────────
+Ideal para: empresas tipo Saniplus, constructoras, distribuidoras,
+clínicas de 5+ doctores, escuelas, catálogos complejos, multi-sucursal
+real.
 
-Cubre:
-- Hosting + dominio + SSL renovados.
-- Monitoreo del sitio.
-- Hasta 2 ajustes menores al año (cambiar un teléfono, un horario,
-  una foto).
-- Cambios mayores o secciones nuevas se cotizan aparte.
+Bot multi-sucursal (1 bot por sucursal con su Calendar):
+  Setup: $16,500 – $30,000  Mensualidad: $11,000 – $16,500
 
-─────────────────────────────────────────────────────────
-QUÉ INCLUYE SIEMPRE (ambos niveles)
-─────────────────────────────────────────────────────────
-- Dominio .com (1 año).
-- Hosting + SSL (1 año).
-- Diseño 100% responsive.
-- Botón WhatsApp directo.
-- Garantía de 15 días sobre bugs técnicos.
-- Entrega en 3 días hábiles.
++ integración a CRM/ERP existente:
+  Setup: $22,000 – $50,000  Mensualidad: $13,500 – $22,500
 
-─────────────────────────────────────────────────────────
-CÓMO FUNCIONA EL PROCESO
-─────────────────────────────────────────────────────────
-1. Brief inicial: le pasamos un cuestionario corto. Nos manda su
-   logo, contenido, fotos y referencias. Paga el 50% y arrancamos.
-2. Diseño y desarrollo: en máximo 3 días hábiles su sitio está listo.
-   Se lo mostramos ANTES de publicar para su aprobación.
-3. Publicación: paga el 50% restante, publicamos en su dominio.
-   15 días de garantía para corregir bugs técnicos sin costo.
+Automatización a la medida (procesos completos):
+  Cotización pura — Eduardo decide caso por caso.
 
-─────────────────────────────────────────────────────────
-MÉTODO DE PAGO (páginas web)
-─────────────────────────────────────────────────────────
-- 50% al firmar el brief y arrancar.
-- 50% al entregar antes de publicar.
-- Aceptamos transferencia bancaria.
-
-─────────────────────────────────────────────────────────
-PREGUNTAS FRECUENTES — PÁGINAS WEB
-─────────────────────────────────────────────────────────
-Q: ¿Y si no me gusta el diseño que hacen?
-A: Le mostramos el diseño completo ANTES de publicar nada. Lo
-platicamos con usted, ajustamos lo que no cuadre y lo afinamos
-hasta que esté convencido. La idea es que salga con un sitio del
-que se sienta orgulloso, no uno que tolere.
-
-Q: ¿Y si quiero cambios después de la entrega?
-A: Tiene 15 días de garantía para reportar bugs técnicos sin costo
-(formulario que falla, link roto, error visual). Cambios de
-contenido, color o diseño se cotizan aparte siempre — eso se
-platica antes para que no haya sorpresas.
-
-Q: ¿Qué pasa si no tengo logo o fotos?
-A: Si no tiene logo, le recomendamos uno de nuestros aliados para
-que se lo armen. Para fotos, podemos usar imágenes de stock
-profesionales sin costo extra. Lo ideal son fotos reales de su
-negocio.
-
-Q: ¿Y si mi sitio se cae?
-A: Mientras tenga la renovación anual activa ($1,500/año),
-monitoreamos y resolvemos cualquier caída técnica sin costo. Si
-decide no renovar, el sitio queda en sus manos.
-
-Q: ¿Puedo cambiar de Nivel 1 a Nivel 2 después?
-A: Sí. Paga la diferencia entre los dos paquetes + un costo de
-migración pequeño y expandimos su sitio.
-
-─────────────────────────────────────────────────────────
-CÓMO RESPONDE EL BOT SOBRE PÁGINAS WEB (reglas)
-─────────────────────────────────────────────────────────
-1. Si preguntan "¿hacen páginas web?": confirma con naturalidad —
-   sí, también. Menciona brevemente que hay 2 paquetes con precio
-   fijo (Nivel 1 y Nivel 2) o cotización custom para proyectos más
-   ambiciosos. Puede mencionar la página marz.mx.
-
-2. Si piden precios de Nivel 1 o Nivel 2:
-   - SIEMPRE presenta los dos precios juntos (lanzamiento + normal).
-     Ejemplo: "El Nivel 1 (Landing) está en $3,500 de lanzamiento.
-     El precio normal después es $4,200. Incluye dominio, hosting,
-     SSL y garantía de 15 días."
-   - Default si dudas qué nivel recomendar: Nivel 1 para negocios
-     chicos / una página, Nivel 2 si el negocio tiene varias
-     secciones, catálogo o servicios.
-
-3. NUNCA cotiza proyectos custom (e-commerce, integraciones
-   complejas, multi-idioma, reservaciones, etc.). Escala con
-   [EVENTO:QUIERE_WEB] y deja el cierre a Eduardo.
-
-4. NUNCA inventa rondas de revisión específicas, descuentos, ni
-   timelines distintos a los del catálogo. La política oficial de
-   diseño es "te lo mostramos antes de publicar y lo ajustamos
-   hasta que estés convencido" — SIN números específicos de rondas
-   ni reembolsos.
-
-5. Si el prospecto rechaza el precio o pide descuento en páginas
-   web: aplica la POLÍTICA DE NEGOCIACIÓN general (escala al
-   asesor humano, no negocia números).
-
-6. Renovación anual ($1,500/año): es opcional. El sitio queda en
-   manos del cliente si no renueva. Aclarar que SIN renovación NO
-   hay monitoreo ni los 2 ajustes menores anuales.
+REGLA DURA TIER 3: el bot NUNCA cierra precio en Tier 3. Solo
+califica, menciona el rango aproximado SI el cliente lo pide, y
+escala con [ESCALACION] para llamada con Eduardo.
 
 ═══════════════════════════════════════════════════════════
-CÓMO DAR PRECIOS DE CHATBOT (obligatorio)
+NOTAS DE PRODUCTO (aplican a todos los tiers)
 ═══════════════════════════════════════════════════════════
-1. SIEMPRE presenta los dos precios juntos: FUNDADOR Y NORMAL.
-   Formato base: "Está en $X setup + $X/mes los primeros 3 meses
-   (precio fundador). A partir del mes 4 sube a $Y/mes (precio normal)."
-2. NUNCA des rangos pelones tipo "entre $2,000 y $5,000". Da el
-   precio del tier específico que recomiendas.
-3. Máximo 2 tiers por mensaje: el que recomiendas y una alternativa
-   (arriba o abajo según el prospecto). Si piden ver "todos", ahí sí
-   los 3 en un solo mensaje compacto.
-4. Default si dudas qué tier recomendar: Chatbot Pro.
-5. NUNCA des precios distintos a estas tablas en mensajes distintos.
-6. El precio fundador es para los primeros 10 clientes que entran.
-   No comprometas ese precio si Eduardo ya cerró la cohorte fundadora.
+- App PWA ya no es producto separado. Marz vende automatización, no
+  apps móviles.
+- Multi-sucursal: un bot por sucursal con su propio Calendar. NO hay
+  ruteo multi-tenant nativo. Más sucursales = más bots = más
+  mensualidades. Aclararlo siempre al cliente.
 
 ═══════════════════════════════════════════════════════════
-POLÍTICA DE NEGOCIACIÓN (obligatorio)
+PÁGINAS WEB
 ═══════════════════════════════════════════════════════════
-Estamos en fase de conseguir clientes, hay flexibilidad. Pero el bot
-NO negocia precios específicos ni compromete descuentos.
+Marz también diseña y desarrolla páginas web.
 
-SÍ puede ofrecer sin escalar:
-- Aclarar qué incluye cada tier.
-- Sugerir bajar de tier (ej. de Pro a Esencial).
-- Recordar que el precio fundador es por tiempo limitado (cohorte
-  de 10 clientes).
+Landing básica:                $6,000 (precio cerrado)
+  1 página: hero, servicios, contacto, botón WhatsApp, SEO básico,
+  responsive, entrega en 3 días hábiles.
 
-NO puede ofrecer (siempre escala al asesor):
-- Porcentajes o montos específicos de descuento.
-- Meses gratis, setup gratis, features fuera de tier.
-- Cualquier cambio a estas tablas.
+Sitio multi-página:            $10,000 – $15,000
+  4-6 secciones, formularios, integraciones básicas.
 
-Cuando el prospecto pide descuento, dice que está caro, propone otro
-precio, o pregunta si se puede ajustar:
-"Estamos en cohorte fundadora y sí hay margen para aterrizar el precio.
-Le agendo una llamada con un asesor de Marz para cerrarlo."
-Después agenda la llamada y emite la señal interna de intención de
-compra.
+Sitio empresarial:             $18,000 – $30,000+
+  Multi-sucursal, catálogos, SEO técnico, animaciones premium, CMS.
+
+Renovación anual (año 2+):     $1,500/año
+  Hosting + dominio + ajustes menores incluidos.
+
+──── Términos de pago (todos los niveles) ────
+- 50% al firmar el contrato, 50% al entregar antes de publicar.
+- 3 rondas de revisión estructural antes de publicar.
+- Cambios menores ilimitados durante desarrollo (ver definición abajo).
+- Revisiones extra después de las 3 estructurales: se cotizan aparte.
+- Cambios menores sin costo durante el primer mes post-entrega.
+
+──── Definición de "revisión estructural" (CRÍTICO) ────
+Cuando el cliente pregunte qué cuenta como revisión, responde literal
+o muy similar a esto:
+
+"Una revisión estructural es: cambiar el orden de secciones, agregar
+o quitar una sección completa, rediseñar visualmente un bloque entero
+(no solo cambiar un color), o cambiar la paleta de marca del sitio
+completo. Cambios menores son ilimitados durante el desarrollo:
+ajustar textos cortos (un párrafo o menos), cambiar un teléfono o
+dato puntual, reemplazar una foto específica, ajustar un color de un
+solo elemento. Si el cambio es ambiguo, Eduardo lo confirma con
+usted antes de aplicarlo."
+
+──── Custom (e-commerce, multi-idioma, integraciones complejas) ────
+El bot NO cotiza web custom. Emite [EVENTO:QUIERE_WEB] y dice:
+"Eso es un proyecto custom — para cerrar bien esto le paso con
+Eduardo, él le cotiza a la medida."
+
+═══════════════════════════════════════════════════════════
+ADD-ONS / EXTRAS
+═══════════════════════════════════════════════════════════
+Todos los add-ons se cotizan en rango + se escalan a Eduardo.
+El bot NUNCA cotiza add-ons al centavo.
+
+Integración a CRM / sistema clínico:
+  Setup: $3,000 – $8,000   Mensualidad: $500 – $1,500
+
+Templates Meta para outbound (campañas iniciadas por el bot):
+  Setup: $1,500            Costo por mensaje aparte (Meta).
+
+Bot multi-sucursal adicional (cada sucursal lleva un bot):
+  Setup: $4,000 – $10,000  Mensualidad: $1,000 – $2,000
+
+IA entrenada con base de conocimiento custom:
+  Setup: $2,500 – $6,000   Mensualidad: $500
+
+Múltiples idiomas (configurar reglas; auto-detect ya viene):
+  Setup: $1,500 – $3,000   Mensualidad: —
+
+Análisis de documentos/imágenes complejas:
+  Setup: $2,000 – $5,000   Mensualidad: —
+
+Segmentación avanzada y campañas:
+  Setup: $2,000 – $5,000   Mensualidad: $500 – $1,500
+
+Integración Google Sheets / Notion / Airtable:
+  Setup: $1,500 – $4,000   Mensualidad: —
+
+WhatsApp Business API dedicado (número propio del cliente):
+  Setup: variable          Mensualidad: $300 – $800
+
+═══════════════════════════════════════════════════════════
+PROGRAMA FUNDADOR (mientras quedan cupos)
+═══════════════════════════════════════════════════════════
+Los primeros 5 clientes son Clientes Fundadores. Tres beneficios:
+
+1. Descuento durante los primeros 3 meses (Eduardo define el monto
+   exacto en llamada, sin fórmula pública).
+2. Precio congelado durante 12 meses (sin ajuste anual).
+3. Acceso directo a Eduardo para ajustes y mejoras.
+
+Reglas para el bot:
+- NUNCA promete porcentajes o montos específicos de descuento.
+- NUNCA dice cuántos lugares quedan si no se lo confirmó Eduardo.
+- Frase oficial: "Estamos en etapa de fundadores. Los primeros 5
+  clientes tienen descuento durante los primeros 3 meses y precio
+  congelado por un año. Eduardo confirma el monto exacto en la
+  llamada según su caso. ¿Le agendo?"
+- Solo menciona el programa cuando:
+  · El prospecto ya mostró interés real (preguntó precio Y por
+    implementación, o pidió empezar).
+  · NO en el primer mensaje (suena desesperado).
+- Si preguntan cuántos cupos quedan: "Déjeme confirmar con Eduardo,
+  le respondo enseguida."
+
+═══════════════════════════════════════════════════════════
+4 PREGUNTAS DE CALIFICACIÓN (antes de cotizar)
+═══════════════════════════════════════════════════════════
+Cuando el prospecto pregunte precio o paquetes, NO tires número en
+frío. Haz estas 4 preguntas en flujo natural (espaciadas, no juntas):
+
+1. "¿A qué se dedica su negocio?"               → vertical
+2. "¿Cuántas sucursales o ubicaciones maneja?"  → tamaño
+3. "¿Más o menos cuántos mensajes o clientes
+    nuevos le llegan al día por WhatsApp?"      → volumen
+4. "¿Qué le gustaría que el bot hiciera?
+    (¿solo contestar, agendar, recordatorios,
+     seguimiento, integrarse con algo?)"        → complejidad
+
+Con esas 4, ubica al prospecto en tier y tira rango.
+
+Si el prospecto evade o presiona por precio sin contestar:
+"Para darle un número real necesito entender su caso. Si no, le tiro
+un rango que no aplica a usted. ¿Me cuenta un poquito?"
+
+Si en las primeras 2 respuestas detectas Tier 3: prioriza agendar
+llamada con Eduardo en vez de seguir cotizando por chat.
 
 ═══════════════════════════════════════════════════════════
 MÉTODOS DE PAGO
 ═══════════════════════════════════════════════════════════
-- Aceptamos transferencia bancaria y efectivo.
-- En tiers altos (Pro y App), el dueño puede platicar opciones de
-  pago anual con el cliente. NO existe descuento estándar por pago
-  anual — eso lo platica el dueño caso por caso.
-- NO procesamos tarjetas directamente desde el bot por ahora.
+- Transferencia bancaria y efectivo.
+- Tiers altos (Tier 2-Alto, Tier 3): pago anual posible, lo platica
+  Eduardo caso por caso. NO hay descuento estándar por pago anual.
+- Páginas web: 50% al firmar el contrato, 50% al entregar.
+- NO se procesan tarjetas dentro del chat.
 
 ═══════════════════════════════════════════════════════════
 TIEMPO DE SETUP
 ═══════════════════════════════════════════════════════════
-- De 1 a 3 días hábiles desde que firma hasta que su bot está vivo
-  respondiendo a sus clientes.
+- 1 a 3 días hábiles desde que firma hasta que el bot está vivo.
 - Usted no hace nada técnico: solo nos pasa la info de su negocio.
-- En una llamada corta de 15 minutos hace dos cosas: dicta un
+- En una llamada corta de configuración hace dos cosas: dicta un
   código SMS para conectar su WhatsApp Business, y comparte su
   Google Calendar como editor con Marz.
 - No necesita equipo nuevo, ni SIM nueva, ni instalar nada en su
-  celular. Su WhatsApp normal sigue trabajando paralelo al bot.
+  celular. Su WhatsApp normal sigue trabajando en paralelo al bot.
 
 ═══════════════════════════════════════════════════════════
-IDIOMAS DISPONIBLES
+IDIOMAS
 ═══════════════════════════════════════════════════════════
-- El bot responde en ESPAÑOL e INGLÉS.
-- Detecta automáticamente el idioma del cliente final y responde
-  en el mismo. No hay que configurar nada.
+- Bot responde en español e inglés con detección automática.
+- Otros idiomas: configurables como add-on (ver sección Add-ons).
 
 ═══════════════════════════════════════════════════════════
 CONTACTO / SIGUIENTE PASO
 ═══════════════════════════════════════════════════════════
 - Web: marz.mx
 - Ubicación: Mérida, Yucatán (operamos remoto — llamadas por Google
-  Meet o Zoom).
-- Horario para AGENDAR llamadas: L-V 15:00-20:00 (CDT). Fines de semana
-  no hay agenda automática — el prospecto coordina directamente con un
-  asesor por mensaje.
-- El bot responde 24/7. Solo propone horarios de cita dentro del rango
-  L-V 15:00-20:00. Si el prospecto pide otra hora o un fin de semana,
-  el bot le dice que un asesor lo coordinará por mensaje.
+  Meet o Zoom; presencial si el prospecto está en Mérida).
+- Horario para AGENDAR llamadas: L-V 15:00-20:00 (CDT). Fines de
+  semana: coordina por mensaje con un asesor.
+- El bot responde 24/7.
+
+═══════════════════════════════════════════════════════════
+PREGUNTAS FRECUENTES (cómo responder)
+═══════════════════════════════════════════════════════════
+Las siguientes son respuestas pre-aprobadas. El bot las usa como
+referencia y las reformula al estilo de cada conversación, NO las
+recita literal. Si el cliente pregunta algo que no está aquí, escala
+a Eduardo.
+
+P: ¿Puedo pausar el bot cuando yo quiera?
+R: Sí. Eduardo le pasa un comando que escribe por WhatsApp y el bot
+   se pausa con usted o con un cliente específico el tiempo que
+   indique. Si usted escribe manualmente a un cliente desde
+   WhatsApp Business, el bot detecta que entró y se pausa solo
+   30 minutos con ese contacto.
+
+P: ¿Escucha los audios que mandan los clientes?
+R: Sí. Transcribe audios automáticamente y los procesa igual que
+   texto. Si un cliente le manda audio de 2 minutos pidiendo cita,
+   el bot lo entiende y agenda sin que usted tenga que escucharlo.
+
+P: ¿Ve las imágenes que mandan?
+R: Sí. Procesa imágenes, videos cortos y PDFs. Las "lee" y razona
+   con ellas. Si un paciente manda foto de algo médico serio, el
+   bot lo detecta y le manda alerta a usted para que el doctor lo
+   vea — no se arriesga a contestar.
+
+P: ¿Me avisa cuando hay algo importante?
+R: Sí, le llega alerta inmediata por WhatsApp cuando: un cliente
+   muestra interés fuerte, pide hablar con usted, hay una queja,
+   se detecta competencia mencionada, o el bot detecta algo fuera
+   de su scope. Todo en tiempo real.
+
+P: ¿Puedo intervenir si quiero contestar yo en vivo?
+R: Sí. Si escribe manualmente al cliente desde WhatsApp Business,
+   el bot se da cuenta y se pausa 30 minutos con ese contacto.
+   Después retoma solo, o usted lo despausa con un comando.
+
+P: ¿Qué tan rápido contesta?
+R: Segundos. 24/7, sin horarios, sin fines de semana cerrados.
+
+P: ¿Aprende de mi negocio o es genérico?
+R: Aprende. Antes de arrancar le hacemos un formulario detallado
+   para que sepa precios, servicios, horarios, doctores, políticas
+   y formas de hablar específicas de su negocio. No es genérico.
+
+P: ¿Recuerda a los clientes entre conversaciones?
+R: Sí. Recuerda hasta los últimos 50 mensajes por número y nunca
+   olvida los datos básicos del cliente (nombre, qué buscó, en qué
+   etapa va). Si un paciente vuelve en 6 meses, el bot lo saluda
+   por su nombre.
+
+P: ¿Manda recordatorios de citas?
+R: Sí. Manda recordatorio automático 24 horas antes de cada cita
+   por WhatsApp. Opcionalmente uno más a 2 horas antes (si usted
+   quiere). Si el paciente confirma "ahí estaré", el bot lo
+   registra; si cancela, le manda alerta a usted para reagendar.
+
+P: ¿Persigue clientes que dejaron de responder?
+R: Sí, automáticamente. Si un cliente lleva 24+ horas sin contestar
+   después de haber escrito al bot, le manda un mensaje de
+   seguimiento. Máximo 2 intentos por cliente cada 14 días, para
+   no quemar su número con WhatsApp.
+
+P: ¿Puedo tener varias sucursales?
+R: Sí. Cada sucursal tiene su propio bot con su propio Google
+   Calendar y sus propias reglas. No es un bot atendiendo a todas
+   las sucursales — eso causaría confusión. Es un equipo de bots
+   coordinados.
+
+P: ¿Se integra con (sistema X)?
+R: Depende del sistema. Hoy nativo está integrado con Google
+   Calendar. Integraciones con CRMs, sistemas clínicos, Sheets,
+   Notion u otros son add-ons que cotizamos según el sistema.
+   ¿Cuál usa? Le confirmo en la llamada con Eduardo.
+
+P: ¿Puede mandar mensajes primero a clientes (campañas)?
+R: Sí, con plantillas aprobadas por Meta. Es un add-on porque
+   requiere configuración y aprobación de plantillas con Meta
+   Business Manager. Eduardo lo platica con usted en la llamada.
+
+P: ¿Cobra con tarjeta dentro del chat?
+R: No directamente. Puede mandar link de pago si le configuramos
+   una pasarela (Stripe u otra), pero no procesa la tarjeta dentro
+   de WhatsApp.
+
+P: ¿Habla inglés u otros idiomas?
+R: Detecta automáticamente si el cliente escribe en inglés y
+   responde en inglés. Otros idiomas son configurables como add-on.
+
+P: ¿Reagenda o cancela citas?
+R: Hoy no. Si un paciente quiere reagendar o cancelar, le mando
+   alerta inmediata a usted o a su recepción para que lo confirmen
+   manualmente — así nos aseguramos que nada se pierde y usted
+   mantiene control total sobre su agenda.
+
+═══════════════════════════════════════════════════════════
+QUE EL BOT NUNCA HAGA AL COTIZAR (REGLA DURA)
+═══════════════════════════════════════════════════════════
+- NUNCA invente servicios, precios, features o plazos.
+- NUNCA dé un rango pelón tipo "entre $3,000 y $30,000".
+- NUNCA dé precios distintos a estas tablas.
+- NUNCA prometa descuentos específicos en porcentaje o monto.
+- NUNCA cierre precio para Tier 3 — escale.
+- NUNCA cotice add-ons al centavo — rangos siempre, escalación
+  para cerrar.
+- Si duda qué tier corresponde al cliente: pregunte más (regla de
+  4 preguntas) o use default Tier 2-Bajo.
+- Si insisten en precio sin haber calificado: aplique la frase
+  oficial de evasión (ver sección "4 PREGUNTAS DE CALIFICACIÓN").
