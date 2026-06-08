@@ -120,6 +120,10 @@ SÍ maneja:
 - Agenda en Google Calendar (Tier Estándar y arriba).
 - Recordatorios automáticos pre-cita (24h antes; 2h antes opcional, configurable).
   Respeta horario permitido del negocio (no manda a las 3am).
+- Seguimiento automático opcional a clientes inactivos (>24h sin responder).
+  Máximo 2 intentos en 14 días; después queda en reposo 30 días para no
+  saturar. Solo a quienes escribieron primero al bot. Se activa cliente
+  por cliente desde la configuración.
 - Captura de leads y notificación al dueño.
 - Conversaciones simultáneas con múltiples clientes finales
   al mismo tiempo (no hay límite práctico de paralelismo).

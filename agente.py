@@ -1344,14 +1344,18 @@ def _clasificar_tipo_cliente(phone: str) -> str:
     """Determina en qué etapa está el prospecto con base en perfil + flags
     de seguimiento. Orden de prioridad de mayor a menor:
 
-    - 'vip'       : referidor activo (existe flag referido) o cliente_activo
-                    con historial largo. Trato preferencial.
-    - 'cliente_activo' : ya emitió QUIERE_CONTRATAR. Está en proceso de
-                    cierre o ya contrató. Tono relajado, soporte, menos venta.
-    - 'prospecto' : ya dio sus 3 datos (nombre + negocio + ciudad).
-                    Calificado, en evaluación. Consultor directo.
-    - 'nuevo'     : primer contacto, aún sin datos completos. Presenta,
-                    educa con patrón de titulares, tono más formal.
+    - 'vip'         : referidor activo (existe flag referido) Y cliente_activo.
+    - 'cliente_activo' : ya emitió QUIERE_CONTRATAR. Tono soporte, menos venta.
+    - 'inactivo_2'  : recibió 2 intentos de outbound automático sin responder.
+                      Si responde aquí, es señal fuerte de revivir.
+    - 'inactivo_1'  : recibió 1 intento de outbound automático sin responder
+                      aún. Si responde, retoma tono cálido sin reintroducirse.
+    - 'prospecto'   : lead capturado (nombre + negocio + ciudad).
+    - 'nuevo'       : primer contacto, sin datos completos.
+
+    Nota: 'dormido' NO es estado de cliente para el LLM — un cliente
+    dormido que escribe se trata como cualquier otro según sus flags
+    base (limpiarlos antes).
     """
     if not phone:
         return "nuevo"
@@ -1367,6 +1371,14 @@ def _clasificar_tipo_cliente(phone: str) -> str:
     # Cliente activo: ya emitió intención de compra.
     if quiere_flag.exists():
         return "cliente_activo"
+
+    # Inactivo (Feature 2): si recibió follow-up outbound y aún no se
+    # han limpiado los flags (el cliente está respondiendo justo ahora).
+    flags_out = _outbound_flag_paths(phone)
+    if flags_out["intento_2"].exists():
+        return "inactivo_2"
+    if flags_out["intento_1"].exists():
+        return "inactivo_1"
 
     # Prospecto calificado: lead capturado (ya dio nombre+negocio+ciudad).
     if _lead_path(phone).exists():
@@ -1408,10 +1420,29 @@ def _contexto_tipo_cliente(phone: str) -> str:
         "vip": (
             "Este prospecto ya te refirió a alguien Y ya cerró contratación. "
             "Es VIP. Tono: cálido, familiar, preferencial. Reconoce "
-            "implícitamente su valor ('qué gusto saludarte', 'siempre "
-            "atento contigo'). Prioridad alta — si pide algo, flujo "
+            "implícitamente su valor ('qué gusto saludarlo', 'siempre "
+            "atento con usted'). Prioridad alta — si pide algo, flujo "
             "rápido. Considera [ESCALACION] temprana si duda o tiene "
             "problema, Eduardo lo toma directo."
+        ),
+        "inactivo_1": (
+            "Este cliente había quedado en silencio +24h y le mandamos UN "
+            "seguimiento outbound automático. Ahora respondió — está "
+            "RETOMANDO la conversación. Tono: cálido, agradecido de que "
+            "vuelva, SIN reintroducirte (ya os conocíais). Pregúntale "
+            "dónde se había quedado pensando o qué le ayudó a decidir "
+            "retomar. NO empujes cita en el primer turno — primero deja "
+            "que se reenganche al tema. Si se reactiva en serio, sigue "
+            "el flujo normal según su nivel previo (prospecto o cliente)."
+        ),
+        "inactivo_2": (
+            "Este cliente había quedado en silencio +7d después de un primer "
+            "seguimiento, y le mandamos un SEGUNDO outbound. Ahora respondió. "
+            "Tono: muy cálido, agradecido, SIN venta agresiva en este turno. "
+            "Es señal fuerte de interés porque respondió al segundo intento. "
+            "Pregúntale natural qué le hizo retomar y qué necesita. Si pide "
+            "algo concreto (precio, demo, llamada), pásalo rápido a Eduardo "
+            "con [ESCALACION] — es lead caliente que vale toma personal."
         ),
     }[tipo]
 
@@ -2365,6 +2396,93 @@ def _formato_hora_es(dt: datetime) -> str:
     return f"{h12}:{m:02d} {sufijo}"
 
 
+# ─────────────────────────────────────────────────────────────
+# Feature 2 — Outbound automático a clientes inactivos
+# ─────────────────────────────────────────────────────────────
+# Cuando OUTBOUND_AUTOMATICO_ACTIVO=true, el scheduler manda plantilla
+# de seguimiento (reutiliza PLANTILLA_SEGUIMIENTO_NAME) a clientes con
+# >24h sin responder, al menos 1 mensaje propio previo, dentro de horario
+# y día permitido. Máximo 2 intentos en 14d; después → 'dormido' 30d.
+
+OUTBOUND_INACTIVIDAD_MIN_S = 24 * 3600  # 24h reales
+OUTBOUND_INTENTO_2_DESPUES_S = 7 * 24 * 3600  # 7d entre intento 1 y 2
+OUTBOUND_DORMIDO_DIAS = 30
+OUTBOUND_HORA_INICIO = 9   # 9am zona local
+OUTBOUND_HORA_FIN = 20     # 8pm zona local
+OUTBOUND_PERMITE_FIN_DE_SEMANA = False
+
+
+def _es_horario_outbound() -> bool:
+    """True si la hora local actual cae en el rango permitido para outbound."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(CAL_TIMEZONE)
+        h = datetime.now(tz).hour
+    except Exception:
+        h = datetime.utcnow().hour
+    return OUTBOUND_HORA_INICIO <= h < OUTBOUND_HORA_FIN
+
+
+def _es_dia_outbound() -> bool:
+    """True si el día actual (zona local) está permitido. Por default
+    excluye sábado y domingo."""
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(CAL_TIMEZONE)
+        wd = datetime.now(tz).weekday()
+    except Exception:
+        wd = datetime.utcnow().weekday()
+    if OUTBOUND_PERMITE_FIN_DE_SEMANA:
+        return True
+    return wd < 5  # lunes=0 ... domingo=6
+
+
+def _outbound_flag_paths(phone: str) -> dict[str, Path]:
+    norm = normalizar_numero(phone)
+    return {
+        "intento_1": SEGUIMIENTO_DIR / f"{norm}_outbound_intento_1.flag",
+        "intento_2": SEGUIMIENTO_DIR / f"{norm}_outbound_intento_2.flag",
+        "dormido": SEGUIMIENTO_DIR / f"{norm}_outbound_dormido.flag",
+    }
+
+
+def _outbound_estado(phone: str) -> str:
+    """Devuelve 'dormido' | 'intento_2' | 'intento_1' | 'libre'.
+    'libre' significa que se le puede mandar intento_1 si cumple el resto."""
+    flags = _outbound_flag_paths(phone)
+    ahora = datetime.utcnow()
+    # Dormido: si flag con fecha futura existe
+    if flags["dormido"].exists():
+        try:
+            hasta = datetime.fromisoformat(
+                flags["dormido"].read_text().strip().replace("Z", "+00:00")
+            ).replace(tzinfo=None)
+            if hasta > ahora:
+                return "dormido"
+            # Ya expiró: limpia flag para permitir nuevo ciclo
+            flags["dormido"].unlink(missing_ok=True)
+            flags["intento_1"].unlink(missing_ok=True)
+            flags["intento_2"].unlink(missing_ok=True)
+        except Exception:
+            pass
+    if flags["intento_2"].exists():
+        return "intento_2"
+    if flags["intento_1"].exists():
+        return "intento_1"
+    return "libre"
+
+
+def _limpiar_flags_outbound(phone: str) -> bool:
+    """Borra todos los flags de outbound del cliente. Llamado cuando el
+    cliente responde tras un intento de seguimiento. Devuelve True si
+    había algo que limpiar (señal de 'revivido')."""
+    flags = _outbound_flag_paths(phone)
+    habia = any(p.exists() for p in flags.values())
+    for p in flags.values():
+        p.unlink(missing_ok=True)
+    return habia
+
+
 def _enviar_recordatorio_cita(
     path: Path, cita: dict, tipo: str, nombre_negocio: str,
 ) -> bool:
@@ -3090,6 +3208,10 @@ def _scheduler_loop() -> None:
         except Exception:
             log.exception("Error en scheduler_loop")
         try:
+            _verificar_outbound_inactivos()
+        except Exception:
+            log.exception("Error en _verificar_outbound_inactivos")
+        try:
             _backup_tick()
         except Exception:
             log.exception("Error en backup_tick")
@@ -3098,6 +3220,163 @@ def _scheduler_loop() -> None:
 # Iniciar scheduler como daemon thread
 _scheduler_thread = threading.Thread(target=_scheduler_loop, daemon=True)
 _scheduler_thread.start()
+
+
+def _enviar_outbound_inactivo(
+    phone: str, intento: int, tema_interes: str, nombre: str,
+) -> bool:
+    """Manda plantilla de seguimiento al cliente inactivo y escribe el
+    flag del intento correspondiente. Reutiliza PLANTILLA_SEGUIMIENTO_NAME
+    (la misma que el seguimiento manual con CMD_ENVIAR_PLANTILLA)."""
+    if intento not in (1, 2):
+        return False
+    from_e164 = "+" + normalizar_numero(BOT_PHONE or "525631832858")
+    to_e164 = "+" + normalizar_numero(phone)
+    try:
+        ok, err = ycloud_enviar_plantilla(
+            from_e164, to_e164,
+            template_name=PLANTILLA_SEGUIMIENTO_NAME,
+            lang_code=PLANTILLA_SEGUIMIENTO_LANG,
+            params=[nombre or "cliente", tema_interes or "lo que platicamos"],
+        )
+    except Exception as e:
+        log.exception("[OUTBOUND] Excepción enviando a %s", to_e164)
+        return False
+    if not ok:
+        log.error("[OUTBOUND] intento_%d falló a %s: %s", intento, to_e164, err)
+        return False
+    flags = _outbound_flag_paths(phone)
+    flag_key = f"intento_{intento}"
+    ahora_iso = datetime.utcnow().isoformat() + "Z"
+    try:
+        flags[flag_key].write_text(ahora_iso)
+        if intento == 2:
+            # Se prepara la fecha 'dormido' para 30 días después.
+            hasta = datetime.utcnow() + timedelta(days=OUTBOUND_DORMIDO_DIAS)
+            flags["dormido"].write_text(hasta.isoformat() + "Z")
+    except Exception:
+        log.exception("[OUTBOUND] Error escribiendo flag intento_%d", intento)
+    log.info("[OUTBOUND] intento_%d enviado a %s (%s)", intento, nombre, to_e164)
+    return True
+
+
+def _verificar_outbound_inactivos() -> None:
+    """Para cada conversación activa: si >24h sin responder + cumple reglas
+    de seguridad (cliente escribió al menos 1 vez, horario, día, no
+    quality-off, no dormido), manda intento_1 (o intento_2 si pasaron 7d
+    del primero). Solo si OUTBOUND_AUTOMATICO_ACTIVO=true."""
+    try:
+        cfg = obtener_recordatorios_config()
+    except Exception:
+        log.exception("[OUTBOUND] Error cargando config")
+        return
+    if not cfg.get("outbound_activo"):
+        return
+    # Freno global manual: si Eduardo activó freno por quality bajo, no mandamos.
+    quality_off_flag = SEGUIMIENTO_DIR / "_quality_off.flag"
+    if quality_off_flag.exists():
+        return
+    if not _es_dia_outbound():
+        return
+    if not _es_horario_outbound():
+        return
+
+    ahora = datetime.utcnow()
+    try:
+        archivos = list(CONVERSACIONES_DIR.glob("*.json"))
+    except Exception:
+        log.exception("[OUTBOUND] Error listando CONVERSACIONES_DIR")
+        return
+
+    for f in archivos:
+        phone = f.stem
+        # Saltar OWNER_PHONE — no le mandamos seguimiento a Eduardo.
+        if normalizar_numero(phone) == normalizar_numero(OWNER_PHONE or ""):
+            continue
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(data, list) or len(data) < 2:
+            continue
+        # Regla 2: el cliente debe haber escrito al menos 1 vez.
+        if not any(m.get("role") == "user" for m in data):
+            continue
+        # Buscar último mensaje del cliente.
+        ultimo_user_ts = None
+        for m in reversed(data):
+            if m.get("role") == "user" and m.get("ts"):
+                try:
+                    ultimo_user_ts = datetime.fromisoformat(
+                        m["ts"].replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
+                except Exception:
+                    pass
+                break
+        if not ultimo_user_ts:
+            continue
+        horas_sin_responder = (ahora - ultimo_user_ts).total_seconds() / 3600
+        if horas_sin_responder < OUTBOUND_INACTIVIDAD_MIN_S / 3600:
+            continue
+        # Estado actual del outbound para este phone.
+        estado = _outbound_estado(phone)
+        if estado == "dormido":
+            continue
+
+        perfil = _perfil_cliente(phone)
+        nombre = perfil.get("nombre", "") or "cliente"
+        tema = perfil.get("interes", "") or "lo que platicamos"
+
+        if estado == "libre":
+            # Intento 1.
+            ok = _enviar_outbound_inactivo(phone, 1, tema, nombre)
+            if ok:
+                _notificar_owner(
+                    f"📤 OUTBOUND intento 1 enviado\n"
+                    f"Nombre: {nombre}\n"
+                    f"Número: {phone}\n"
+                    f"Sin responder: {int(horas_sin_responder)}h\n"
+                    f"Plantilla: {PLANTILLA_SEGUIMIENTO_NAME}"
+                )
+        elif estado == "intento_1":
+            # ¿Han pasado al menos 7d del intento_1?
+            flags = _outbound_flag_paths(phone)
+            try:
+                ts_1 = datetime.fromisoformat(
+                    flags["intento_1"].read_text().strip().replace("Z", "+00:00")
+                ).replace(tzinfo=None)
+            except Exception:
+                continue
+            if (ahora - ts_1).total_seconds() < OUTBOUND_INTENTO_2_DESPUES_S:
+                continue
+            ok = _enviar_outbound_inactivo(phone, 2, tema, nombre)
+            if ok:
+                _notificar_owner(
+                    f"📤 OUTBOUND intento 2 enviado (último)\n"
+                    f"Nombre: {nombre}\n"
+                    f"Número: {phone}\n"
+                    f"Si no responde, queda dormido 30 días."
+                )
+        # estado == "intento_2": ya mandó los 2, está esperando timeout
+        # para pasar a dormido. No mandamos más.
+
+
+def notificar_cliente_revivido(phone: str, nombre: str) -> None:
+    """Llamado cuando un cliente que estaba en intento_1 o intento_2
+    responde al follow-up. Alerta a Eduardo para que tome la conversación
+    si vale la pena (porque ya hay intención de retomar)."""
+    _notificar_owner(
+        f"✅ CLIENTE REVIVIDO\n"
+        f"Nombre: {nombre}\n"
+        f"Número: {phone}\n"
+        f"Respondió al seguimiento outbound. Considera tomar el chat."
+    )
+
+
+def notificar_cliente_dormido(phone: str, nombre: str) -> None:
+    """Llamado cuando un cliente queda dormido (sin alerta hardcore — log
+    informativo). Llamado tras intento_2 sin respuesta y >30d después."""
+    log.info("[OUTBOUND] cliente dormido: %s (%s)", nombre, phone)
 
 
 def _recordatorios_loop() -> None:
@@ -5345,12 +5624,12 @@ def _process_message_group(msgs: list[dict]) -> None:
             _log_security_event(from_number, "jailbreak", plain_text)
             ycloud_enviar_texto(
                 to_number, from_number,
-                "No puedo hacer eso. ¿Te puedo ayudar con algo sobre nuestros servicios?"
+                "No puedo hacer eso. ¿Le puedo ayudar con algo sobre nuestros servicios?"
             )
             guardar_mensaje(from_number, "user", plain_text)
             guardar_mensaje(
                 from_number, "assistant",
-                "No puedo hacer eso. ¿Te puedo ayudar con algo sobre nuestros servicios?"
+                "No puedo hacer eso. ¿Le puedo ayudar con algo sobre nuestros servicios?"
             )
             return
 
@@ -5643,6 +5922,19 @@ def _run_llm_pipeline(from_number: str, to_number: str,
     calendario, agenda cita si aplica, extrae lead, detecta evento
     "quiere contratar", envía respuesta y dispara notificaciones de
     cita y lead calificado."""
+    # Si el cliente venía de un intento outbound (inactivo_1/2), respondió.
+    # Limpiamos sus flags y notificamos a Eduardo de que revivió. Esto
+    # también lo despierta de 'dormido' si por algún caso límite estaba ahí.
+    try:
+        estado_prev = _outbound_estado(from_number)
+        if estado_prev in ("intento_1", "intento_2", "dormido"):
+            perfil = _perfil_cliente(from_number)
+            nombre = perfil.get("nombre", "") or from_number
+            _limpiar_flags_outbound(from_number)
+            notificar_cliente_revivido(from_number, nombre)
+    except Exception:
+        log.exception("[OUTBOUND] Error procesando revivido")
+
     guardar_mensaje(from_number, "user", texto_guardar)
 
     try:
