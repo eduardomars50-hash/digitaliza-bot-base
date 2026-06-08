@@ -14,3 +14,6 @@ data/
 .idea/
 .vscode/
 *.swp
+
+# Documentación humana local (no se versiona en producción)
+ESTRUCTURA.pdf
