@@ -150,6 +150,11 @@ class TestTroceoMensajes(unittest.TestCase):
         self.assertTrue(all(len(p) <= 200 for p in partes))
         self.assertTrue(all(p.strip() for p in partes))
 
+    def test_parrafos_salen_separados(self):
+        texto = "Primero.\n\nSegundo.\n\nTercero."
+        partes = agente._trocear(texto, 200)
+        self.assertEqual(partes, ["Primero.", "Segundo.", "Tercero."])
+
 
 class TestPdfSoporte(unittest.TestCase):
     def test_document_pdf_pasa_por_meta(self):

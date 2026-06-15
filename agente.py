@@ -2230,7 +2230,7 @@ def ycloud_enviar_plantilla(
 
 
 def _trocear(texto: str, limite: int) -> list[str]:
-    if len(texto) <= limite:
+    if len(texto) <= limite and "\n" not in texto:
         return [texto]
 
     def _trozos_de_parrafo(parrafo: str) -> list[str]:
@@ -2278,7 +2278,6 @@ def _trocear(texto: str, limite: int) -> list[str]:
         return trozos
 
     partes: list[str] = []
-    actual = ""
     for parrafo in texto.split("\n"):
         parrafo = parrafo.strip()
         if not parrafo:
@@ -2287,15 +2286,7 @@ def _trocear(texto: str, limite: int) -> list[str]:
         for trozo in trozos:
             if not trozo:
                 continue
-            candidato = trozo if not actual else f"{actual}\n{trozo}"
-            if len(candidato) <= limite:
-                actual = candidato
-            else:
-                if actual:
-                    partes.append(actual.strip())
-                actual = trozo
-    if actual.strip():
-        partes.append(actual.strip())
+            partes.append(trozo.strip())
     return partes
 
 
