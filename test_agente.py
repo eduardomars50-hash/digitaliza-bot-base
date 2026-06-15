@@ -446,6 +446,19 @@ class TestSanitizerSalida(unittest.TestCase):
         )
         self.assertNotIn("QUIERE_WEB", t.upper())
 
+    def test_viñetas_y_numeracion_se_aplanan(self):
+        t = agente._sanitizar_salida(
+            "- Atiende clientes 24/7.\n"
+            "1. Agenda citas.\n"
+            "• Da seguimiento.\n"
+            "— Y no pierde mensajes."
+        )
+        self.assertNotIn("- ", t)
+        self.assertNotIn("1. ", t)
+        self.assertNotIn("•", t)
+        self.assertNotIn("—", t)
+        self.assertIn("Atiende clientes 24/7.", t)
+
     def test_fallback_si_quedo_vacio(self):
         """Si Gemini respondió solo con tags, devolvemos texto neutral."""
         t = agente._sanitizar_salida(
