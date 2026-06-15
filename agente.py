@@ -63,7 +63,7 @@ for d in (CONVERSACIONES_DIR, LEADS_DIR, PERFILES_DIR, CITAS_DIR, CITAS_ARCHIVO_
 MAX_HISTORIAL = 50
 CONTEXTO_DEFAULT = 12  # subimos de 5 a 12: más coherencia, bot deja de re-presentarse
 CONTEXTO_EXTENDIDO = 30
-MAX_CHARS_MENSAJE = 1500
+MAX_CHARS_MENSAJE = 700
 SENAL_MAS_CONTEXTO = "[NECESITO_MAS_CONTEXTO]"
 LEAD_TAG_RE = re.compile(r"\[LEAD_CAPTURADO:([^\]]+)\]", re.IGNORECASE)
 
@@ -2232,19 +2232,68 @@ def ycloud_enviar_plantilla(
 def _trocear(texto: str, limite: int) -> list[str]:
     if len(texto) <= limite:
         return [texto]
-    partes, actual = [], ""
-    for parrafo in texto.split("\n"):
-        if len(actual) + len(parrafo) + 1 > limite:
-            if actual:
-                partes.append(actual.strip())
-            if len(parrafo) > limite:
-                for i in range(0, len(parrafo), limite):
-                    partes.append(parrafo[i:i + limite])
-                actual = ""
+
+    def _trozos_de_parrafo(parrafo: str) -> list[str]:
+        parrafo = parrafo.strip()
+        if not parrafo:
+            return []
+        if len(parrafo) <= limite:
+            return [parrafo]
+
+        frases = re.split(r"(?<=[.!?])\s+", parrafo)
+        trozos: list[str] = []
+        actual = ""
+        for frase in frases:
+            frase = frase.strip()
+            if not frase:
+                continue
+            if len(frase) > limite:
+                if actual:
+                    trozos.append(actual.strip())
+                    actual = ""
+                palabras = frase.split()
+                parcial = ""
+                for palabra in palabras:
+                    candidato = palabra if not parcial else f"{parcial} {palabra}"
+                    if len(candidato) <= limite:
+                        parcial = candidato
+                    else:
+                        if parcial:
+                            trozos.append(parcial.strip())
+                        parcial = palabra
+                if parcial:
+                    trozos.append(parcial.strip())
+                continue
+
+            candidato = frase if not actual else f"{actual} {frase}"
+            if len(candidato) <= limite:
+                actual = candidato
             else:
-                actual = parrafo + "\n"
-        else:
-            actual += parrafo + "\n"
+                if actual:
+                    trozos.append(actual.strip())
+                actual = frase
+
+        if actual.strip():
+            trozos.append(actual.strip())
+        return trozos
+
+    partes: list[str] = []
+    actual = ""
+    for parrafo in texto.split("\n"):
+        parrafo = parrafo.strip()
+        if not parrafo:
+            continue
+        trozos = _trozos_de_parrafo(parrafo)
+        for trozo in trozos:
+            if not trozo:
+                continue
+            candidato = trozo if not actual else f"{actual}\n{trozo}"
+            if len(candidato) <= limite:
+                actual = candidato
+            else:
+                if actual:
+                    partes.append(actual.strip())
+                actual = trozo
     if actual.strip():
         partes.append(actual.strip())
     return partes

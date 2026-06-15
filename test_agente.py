@@ -137,6 +137,20 @@ class TestParseHora(unittest.TestCase):
         self.assertEqual(agente._parse_hora("-1", 15), 15)
 
 
+class TestTroceoMensajes(unittest.TestCase):
+    def test_partido_por_frases(self):
+        texto = (
+            "Hola, gracias por escribirnos. "
+            "Claro que sí, te explico con calma. "
+            "Primero revisamos lo que necesitas. "
+            "Después te paso la mejor opción. "
+        ) * 8
+        partes = agente._trocear(texto, 200)
+        self.assertGreater(len(partes), 1)
+        self.assertTrue(all(len(p) <= 200 for p in partes))
+        self.assertTrue(all(p.strip() for p in partes))
+
+
 class TestPausas(unittest.TestCase):
     def setUp(self):
         # Reset config path to clean slate per test
