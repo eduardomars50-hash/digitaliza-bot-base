@@ -262,6 +262,71 @@ class TestMetaCloudAPI(unittest.TestCase):
         self.assertEqual(payload["text"]["body"], "respuesta prueba")
         self.assertEqual(timeout, 20)
 
+    def test_meta_descargar_media_via_graph(self):
+        agente.WHATSAPP_ACCESS_TOKEN = "dummy_token_no_real"
+        agente.META_GRAPH_VERSION = "v25.0"
+        calls = []
+
+        class RespMeta:
+            status_code = 200
+            content = b'{"url":"https://cdn.example.com/file.ogg"}'
+            text = '{"url":"https://cdn.example.com/file.ogg"}'
+            headers = {"Content-Type": "application/json"}
+
+            def json(self):
+                return {"url": "https://cdn.example.com/file.ogg"}
+
+        class RespBin:
+            status_code = 200
+            content = b"audio-bytes"
+            text = ""
+            headers = {"Content-Type": "audio/ogg"}
+
+            def json(self):
+                return {}
+
+        def fake_get(url, headers=None, timeout=None):
+            calls.append((url, headers, timeout))
+            return RespMeta() if len(calls) == 1 else RespBin()
+
+        old_get = agente.requests.get
+        agente.requests.get = fake_get
+        try:
+            blob = agente.meta_descargar_media("mid.123")
+        finally:
+            agente.requests.get = old_get
+
+        self.assertEqual(blob, b"audio-bytes")
+        self.assertEqual(calls[0][0], "https://graph.facebook.com/v25.0/mid.123")
+        self.assertEqual(calls[1][0], "https://cdn.example.com/file.ogg")
+
+    def test_descargar_media_mensaje_prefiere_meta(self):
+        meta_calls = []
+        ycloud_calls = []
+
+        old_meta = agente.meta_descargar_media
+        old_ycloud = agente.ycloud_descargar_media
+        agente.meta_descargar_media = lambda media_id, media_obj=None: (
+            meta_calls.append((media_id, media_obj)) or b"meta-bytes"
+        )
+        agente.ycloud_descargar_media = lambda media_id, media_obj=None: (
+            ycloud_calls.append((media_id, media_obj)) or b"ycloud-bytes"
+        )
+        try:
+            blob, obj = agente.descargar_media_mensaje(
+                {"audio": {"id": "audio123"}},
+                "audio",
+                "meta",
+            )
+        finally:
+            agente.meta_descargar_media = old_meta
+            agente.ycloud_descargar_media = old_ycloud
+
+        self.assertEqual(blob, b"meta-bytes")
+        self.assertEqual(obj["id"], "audio123")
+        self.assertEqual(len(meta_calls), 1)
+        self.assertEqual(len(ycloud_calls), 0)
+
 
 class TestAgendaConfig(unittest.TestCase):
     def test_estructura_valida(self):

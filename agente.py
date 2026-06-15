@@ -1892,6 +1892,81 @@ def ycloud_descargar_media(media_id: str, media_obj: dict | None = None) -> byte
     return None
 
 
+def meta_descargar_media(media_id: str, media_obj: dict | None = None) -> bytes | None:
+    """Descarga media desde WhatsApp Cloud API directo.
+
+    Flujo estándar de Meta:
+    1. GET /{media-id} con Bearer token para obtener una URL temporal.
+    2. GET a esa URL para bajar los bytes.
+
+    Conserva el mismo contrato que `ycloud_descargar_media`.
+    """
+    if media_obj:
+        log.info(
+            "[META MEDIA] objeto webhook: %s",
+            json.dumps(media_obj, ensure_ascii=False)[:300],
+        )
+
+    if not (WHATSAPP_ACCESS_TOKEN and media_id):
+        return None
+
+    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+    meta_media_url = f"https://graph.facebook.com/{META_GRAPH_VERSION}/{media_id}"
+    try:
+        r = requests.get(meta_media_url, headers=headers, timeout=20)
+    except Exception:
+        log.exception("[META MEDIA] GET falló: %s", meta_media_url)
+        return None
+
+    if r.status_code != 200 or not r.content:
+        log.info(
+            "[META MEDIA] %s → %s %s",
+            meta_media_url, r.status_code, (r.text or "")[:150],
+        )
+        return None
+
+    ctype = (r.headers.get("Content-Type") or "").lower()
+    url = None
+    if "json" in ctype:
+        try:
+            data = r.json()
+        except Exception:
+            data = {}
+        if isinstance(data, dict):
+            url = data.get("url")
+            if not url and isinstance(data.get("data"), dict):
+                url = data["data"].get("url")
+            if not url and "link" in data:
+                url = data.get("link")
+    elif ctype.startswith(("audio/", "image/", "video/", "application/octet-stream")):
+        return r.content
+
+    if not url:
+        log.info("[META MEDIA] respuesta sin URL útil: %s", (r.text or "")[:200])
+        return None
+
+    try:
+        r2 = requests.get(url, headers=headers, timeout=30)
+    except Exception:
+        log.exception("[META MEDIA] descarga falló: %s", url[:120])
+        return None
+    if r2.status_code != 200 or not r2.content:
+        log.info(
+            "[META MEDIA] download %s → %s %s",
+            url[:120], r2.status_code, (r2.text or "")[:150],
+        )
+        return None
+    return r2.content
+
+
+def descargar_media_mensaje(msg: dict, tipo: str, source: str) -> tuple[bytes | None, dict]:
+    """Descarga la media del mensaje usando el backend correcto."""
+    media_obj = msg.get(tipo) or {}
+    if source == "meta":
+        return meta_descargar_media(media_obj.get("id", ""), media_obj), media_obj
+    return ycloud_descargar_media(media_obj.get("id", ""), media_obj), media_obj
+
+
 def meta_enviar_texto(to_number: str, texto: str) -> tuple[bool, str]:
     """Envía texto usando WhatsApp Cloud API directo.
 
@@ -5561,6 +5636,7 @@ def _process_message_group(msgs: list[dict]) -> None:
     if not msgs:
         return
     base = msgs[0]
+    source = base.get("_source", "ycloud")
     from_number = base.get("from", "")
     to_number = base.get("to", "")
     if not from_number or not to_number:
@@ -5675,10 +5751,7 @@ def _process_message_group(msgs: list[dict]) -> None:
                     parts.append(b)
 
             elif tipo in ("audio", "voice"):
-                media_obj = msg.get("audio") or msg.get("voice") or {}
-                audio_bytes = ycloud_descargar_media(
-                    media_obj.get("id", ""), media_obj
-                )
+                audio_bytes, _media_obj = descargar_media_mensaje(msg, "audio", source)
                 if not audio_bytes:
                     ycloud_enviar_texto(
                         to_number, from_number,
@@ -5699,9 +5772,7 @@ def _process_message_group(msgs: list[dict]) -> None:
             elif tipo == "image":
                 img_obj = msg.get("image") or {}
                 caption = (img_obj.get("caption") or "").strip()
-                img_bytes = ycloud_descargar_media(
-                    img_obj.get("id", ""), img_obj
-                )
+                img_bytes, _media_obj = descargar_media_mensaje(msg, "image", source)
                 if not img_bytes:
                     ycloud_enviar_texto(
                         to_number, from_number,
@@ -5731,9 +5802,7 @@ def _process_message_group(msgs: list[dict]) -> None:
 
             elif tipo == "sticker":
                 stk_obj = msg.get("sticker") or {}
-                stk_bytes = ycloud_descargar_media(
-                    stk_obj.get("id", ""), stk_obj
-                )
+                stk_bytes, _media_obj = descargar_media_mensaje(msg, "sticker", source)
                 if not stk_bytes:
                     ycloud_enviar_texto(
                         to_number, from_number,
@@ -5771,9 +5840,7 @@ def _process_message_group(msgs: list[dict]) -> None:
                         "¿Me mandas el documento como PDF o me lo describes?"
                     )
                     return
-                doc_bytes = ycloud_descargar_media(
-                    doc_obj.get("id", ""), doc_obj
-                )
+                doc_bytes, _media_obj = descargar_media_mensaje(msg, "document", source)
                 if not doc_bytes:
                     ycloud_enviar_texto(
                         to_number, from_number,
@@ -5810,9 +5877,7 @@ def _process_message_group(msgs: list[dict]) -> None:
                 mime = (vid_obj.get("mime_type") or vid_obj.get("mimeType")
                         or "video/mp4").lower()
                 caption = (vid_obj.get("caption") or "").strip()
-                vid_bytes = ycloud_descargar_media(
-                    vid_obj.get("id", ""), vid_obj
-                )
+                vid_bytes, _media_obj = descargar_media_mensaje(msg, "video", source)
                 if not vid_bytes:
                     ycloud_enviar_texto(
                         to_number, from_number,
@@ -6046,9 +6111,10 @@ def _procesar_admin(msg: dict, from_number: str, to_number: str, tipo: str) -> N
             procesar_mensaje_admin(cuerpo, to_number)
         return
 
+    source = msg.get("_source", "ycloud")
+
     if tipo in ("audio", "voice"):
-        media_obj = msg.get("audio") or msg.get("voice") or {}
-        audio_bytes = ycloud_descargar_media(media_obj.get("id", ""), media_obj)
+        audio_bytes, _media_obj = descargar_media_mensaje(msg, "audio", source)
         if not audio_bytes:
             ycloud_enviar_texto(to_number, OWNER_PHONE,
                                 "No pude descargar tu nota de voz, ¿me la reenvías?")
@@ -6065,7 +6131,7 @@ def _procesar_admin(msg: dict, from_number: str, to_number: str, tipo: str) -> N
     if tipo == "image":
         img_obj = msg.get("image") or {}
         caption = (img_obj.get("caption") or "").strip()
-        img_bytes = ycloud_descargar_media(img_obj.get("id", ""), img_obj)
+        img_bytes, _media_obj = descargar_media_mensaje(msg, "image", source)
         if not img_bytes:
             ycloud_enviar_texto(to_number, OWNER_PHONE,
                                 "No pude descargar la imagen, ¿me la reenvías?")
@@ -6082,7 +6148,7 @@ def _procesar_admin(msg: dict, from_number: str, to_number: str, tipo: str) -> N
 
     if tipo == "sticker":
         stk_obj = msg.get("sticker") or {}
-        stk_bytes = ycloud_descargar_media(stk_obj.get("id", ""), stk_obj)
+        stk_bytes, _media_obj = descargar_media_mensaje(msg, "sticker", source)
         if not stk_bytes:
             ycloud_enviar_texto(to_number, OWNER_PHONE,
                                 "No pude descargar el sticker, ¿me lo reenvías?")
@@ -6105,7 +6171,7 @@ def _procesar_admin(msg: dict, from_number: str, to_number: str, tipo: str) -> N
             ycloud_enviar_texto(to_number, OWNER_PHONE,
                                 "Por ahora solo proceso PDFs. Mándalo como PDF.")
             return
-        doc_bytes = ycloud_descargar_media(doc_obj.get("id", ""), doc_obj)
+        doc_bytes, _media_obj = descargar_media_mensaje(msg, "document", source)
         if not doc_bytes:
             ycloud_enviar_texto(to_number, OWNER_PHONE,
                                 "No pude descargar el PDF, ¿me lo reenvías?")
@@ -6130,7 +6196,7 @@ def _procesar_admin(msg: dict, from_number: str, to_number: str, tipo: str) -> N
         vid_obj = msg.get("video") or {}
         mime = (vid_obj.get("mime_type") or vid_obj.get("mimeType")
                 or "video/mp4").lower()
-        vid_bytes = ycloud_descargar_media(vid_obj.get("id", ""), vid_obj)
+        vid_bytes, _media_obj = descargar_media_mensaje(msg, "video", source)
         if not vid_bytes:
             ycloud_enviar_texto(to_number, OWNER_PHONE,
                                 "No pude descargar el video, ¿me lo reenvías?")
