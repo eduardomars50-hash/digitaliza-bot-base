@@ -181,6 +181,88 @@ class TestBotSentTracking(unittest.TestCase):
         self.assertFalse(agente._es_id_de_bot(""))
 
 
+class TestMetaCloudAPI(unittest.TestCase):
+    def setUp(self):
+        self._old_phone_id = agente.WHATSAPP_PHONE_NUMBER_ID
+        self._old_token = agente.WHATSAPP_ACCESS_TOKEN
+        self._old_url = agente.META_MESSAGES_URL
+        self._old_post = agente.requests.post
+
+    def tearDown(self):
+        agente.WHATSAPP_PHONE_NUMBER_ID = self._old_phone_id
+        agente.WHATSAPP_ACCESS_TOKEN = self._old_token
+        agente.META_MESSAGES_URL = self._old_url
+        agente.requests.post = self._old_post
+
+    def test_meta_message_to_internal_text(self):
+        agente.WHATSAPP_PHONE_NUMBER_ID = "1108506122354011"
+        value = {
+            "metadata": {
+                "display_phone_number": "525638678463",
+                "phone_number_id": "1108506122354011",
+            }
+        }
+        message = {
+            "from": "5219991234567",
+            "id": "wamid.TEST",
+            "timestamp": "1710000000",
+            "type": "text",
+            "text": {"body": "hola prueba real"},
+        }
+        internal = agente._mensaje_meta_a_interno(message, value)
+        self.assertEqual(internal["_source"], "meta")
+        self.assertEqual(internal["from"], "5219991234567")
+        self.assertEqual(internal["to"], "525638678463")
+        self.assertEqual(internal["type"], "text")
+        self.assertEqual(internal["text"]["body"], "hola prueba real")
+
+    def test_meta_phone_id_mismatch_ignored(self):
+        agente.WHATSAPP_PHONE_NUMBER_ID = "real"
+        value = {"metadata": {"phone_number_id": "otro"}}
+        message = {
+            "from": "5219991234567",
+            "id": "wamid.TEST",
+            "type": "text",
+            "text": {"body": "hola"},
+        }
+        self.assertIsNone(agente._mensaje_meta_a_interno(message, value))
+
+    def test_meta_send_text_payload(self):
+        agente.WHATSAPP_ACCESS_TOKEN = "dummy_token_no_real"
+        agente.WHATSAPP_PHONE_NUMBER_ID = "1108506122354011"
+        agente.META_MESSAGES_URL = (
+            "https://graph.facebook.com/v25.0/1108506122354011/messages"
+        )
+        calls = []
+
+        class Resp:
+            status_code = 200
+            text = "{}"
+            content = b"{}"
+
+            def json(self):
+                return {"messages": [{"id": "wamid.OUT"}]}
+
+        def fake_post(url, headers=None, json=None, timeout=None):
+            calls.append((url, headers, json, timeout))
+            return Resp()
+
+        agente.requests.post = fake_post
+        ok, err = agente.meta_enviar_texto("5219991234567", "respuesta prueba")
+        self.assertTrue(ok)
+        self.assertEqual(err, "")
+        url, headers, payload, timeout = calls[0]
+        self.assertEqual(
+            url, "https://graph.facebook.com/v25.0/1108506122354011/messages"
+        )
+        self.assertTrue(headers["Authorization"].startswith("Bearer "))
+        self.assertEqual(payload["messaging_product"], "whatsapp")
+        self.assertEqual(payload["to"], "5219991234567")
+        self.assertEqual(payload["type"], "text")
+        self.assertEqual(payload["text"]["body"], "respuesta prueba")
+        self.assertEqual(timeout, 20)
+
+
 class TestAgendaConfig(unittest.TestCase):
     def test_estructura_valida(self):
         cfg = agente.obtener_agenda_config()

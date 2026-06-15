@@ -1,6 +1,6 @@
 """
 Digitaliza Bot Base
-Recepcionista virtual para WhatsApp vía YCloud.
+Recepcionista virtual para WhatsApp vía YCloud o Meta Cloud API directo.
 Cerebro: Google Gemini 2.0 Flash.
 Transcripción de audio: Groq Whisper large-v3.
 """
@@ -39,6 +39,13 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODELO = os.environ.get("GROQ_MODELO", "whisper-large-v3")
 YCLOUD_API_KEY = os.environ.get("YCLOUD_API_KEY", "")
 YCLOUD_VERIFY_TOKEN = os.environ.get("YCLOUD_WEBHOOK_VERIFY_TOKEN", "digitaliza2026")
+WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_WABA_ID = os.environ.get("WHATSAPP_WABA_ID", "")
+WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+META_GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "v25.0").strip() or "v25.0"
+if not META_GRAPH_VERSION.startswith("v"):
+    META_GRAPH_VERSION = f"v{META_GRAPH_VERSION}"
 GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 PORT = int(os.environ.get("PORT", "5000"))
@@ -62,6 +69,10 @@ LEAD_TAG_RE = re.compile(r"\[LEAD_CAPTURADO:([^\]]+)\]", re.IGNORECASE)
 
 YCLOUD_SEND_URL = "https://api.ycloud.com/v2/whatsapp/messages"
 YCLOUD_MEDIA_URL = "https://api.ycloud.com/v2/whatsapp/media"
+META_MESSAGES_URL = (
+    f"https://graph.facebook.com/{META_GRAPH_VERSION}/"
+    f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
+)
 
 # Marker que la web inserta en el wa.me link como pre-fill text. Cuando el
 # bot recibe un primer mensaje con este texto, sabe que el prospecto viene
@@ -175,6 +186,40 @@ def normalizar_numero(numero: str) -> str:
     if len(solo_digitos) == 13 and solo_digitos.startswith("521"):
         solo_digitos = "52" + solo_digitos[3:]
     return solo_digitos
+
+
+def _solo_digitos(numero: str) -> str:
+    """Solo quita caracteres no numéricos; no aplica reglas MX legacy."""
+    if not numero:
+        return ""
+    return "".join(c for c in str(numero) if c.isdigit())
+
+
+def _meta_cloud_configurada() -> bool:
+    return bool(WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID)
+
+
+def _redactar_secrets(texto: str) -> str:
+    """Evita que errores de APIs impriman tokens o API keys por accidente."""
+    if not texto:
+        return ""
+    limpio = str(texto)
+    for secreto in (
+        WHATSAPP_ACCESS_TOKEN,
+        YCLOUD_API_KEY,
+        GROQ_API_KEY,
+        GEMINI_API_KEY,
+    ):
+        if secreto and len(secreto) >= 8:
+            limpio = limpio.replace(secreto, "[REDACTED]")
+    return limpio
+
+
+def _mask_phone(numero: str) -> str:
+    digits = _solo_digitos(numero)
+    if len(digits) <= 4:
+        return digits or "-"
+    return f"...{digits[-4:]}"
 
 
 def _check_rate_limit(phone: str) -> bool:
@@ -1847,12 +1892,84 @@ def ycloud_descargar_media(media_id: str, media_obj: dict | None = None) -> byte
     return None
 
 
+def meta_enviar_texto(to_number: str, texto: str) -> tuple[bool, str]:
+    """Envía texto usando WhatsApp Cloud API directo.
+
+    `to_number` debe conservar el wa_id del webhook cuando venga de Meta.
+    Por eso aquí solo quitamos caracteres no numéricos; no aplicamos la
+    normalización MX legacy que se usa para llaves internas de historial.
+    """
+    if not _meta_cloud_configurada():
+        return False, "Meta Cloud API no configurada"
+
+    destino = _solo_digitos(to_number)
+    if not destino:
+        return False, "destino vacío"
+
+    partes = _trocear(texto, MAX_CHARS_MENSAJE)
+    any_ok = False
+    first_error = ""
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    for i, parte in enumerate(partes):
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": destino,
+            "type": "text",
+            "text": {"body": parte},
+        }
+        try:
+            r = requests.post(
+                META_MESSAGES_URL,
+                headers=headers,
+                json=payload,
+                timeout=20,
+            )
+            log.info(
+                "[META SEND] status code: %s -> %s parte %d/%d",
+                r.status_code, _mask_phone(destino), i + 1, len(partes),
+            )
+            if r.status_code >= 400:
+                snippet = _redactar_secrets((r.text or "").strip())[:500]
+                log.error("[META SEND ERROR] %s %s", r.status_code, snippet)
+                if not first_error:
+                    first_error = f"HTTP {r.status_code}: {snippet[:240]}"
+            else:
+                any_ok = True
+                try:
+                    resp_json = r.json() if r.content else {}
+                    messages = (
+                        resp_json.get("messages")
+                        if isinstance(resp_json, dict) else []
+                    )
+                    for item in messages or []:
+                        msg_id = item.get("id") if isinstance(item, dict) else ""
+                        if msg_id:
+                            _marcar_id_de_bot(msg_id)
+                except Exception:
+                    pass
+        except Exception as e:
+            log.exception(
+                "[META SEND ERROR] excepción enviando a %s",
+                _mask_phone(destino),
+            )
+            if not first_error:
+                first_error = f"excepción: {type(e).__name__}: {e}"[:240]
+        time.sleep(0.4)
+    return any_ok, first_error
+
+
 def ycloud_enviar_texto(from_number: str, to_number: str,
                         texto: str) -> tuple[bool, str]:
     """Envía un texto por YCloud. Devuelve (ok, detalle). ok=True si al
     menos una parte se aceptó (status < 400). detalle es un resumen
     corto del primer error encontrado o "" si todo bien. Los callers
     históricos que ignoran el retorno siguen funcionando igual."""
+    if _meta_cloud_configurada():
+        return meta_enviar_texto(to_number, texto)
+
     partes = _trocear(texto, MAX_CHARS_MENSAJE)
     any_ok = False
     first_error = ""
@@ -1917,6 +2034,15 @@ def ycloud_enviar_botones_web(from_number: str, to_number: str) -> tuple[bool, s
         "👋 ¡Hola! Le saludamos de Marz, agencia de automatización con IA.\n\n"
         "Vi que viene desde nuestro sitio web. ¿Cómo prefiere que le atienda?"
     )
+    if _meta_cloud_configurada():
+        return ycloud_enviar_texto(
+            from_number,
+            to_number,
+            f"{body_text}\n\n"
+            "Responda con *1* para que le atienda la IA "
+            "o con *2* para que le atienda Eduardo directamente.",
+        )
+
     payload = {
         "from": from_number,
         "to": to_number,
@@ -5772,6 +5898,7 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
     }
     """
     try:
+        source = msg.get("_source", "ycloud")
         from_number = msg.get("from", "")
         to_number = msg.get("to", "")
         tipo = msg.get("type", "")
@@ -5781,12 +5908,19 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
 
         # YCloud manda webhooks de TODOS los números del portfolio. Solo
         # procesamos los mensajes enviados AL número oficial de Digitaliza.
-        if BOT_PHONE and normalizar_numero(to_number) != normalizar_numero(BOT_PHONE):
+        # En Meta directo el filtro correcto es phone_number_id y ya se aplicó
+        # antes de convertir el payload al formato interno.
+        if (
+            source != "meta"
+            and BOT_PHONE
+            and normalizar_numero(to_number) != normalizar_numero(BOT_PHONE)
+        ):
             log.info("[SKIP] Mensaje para %s (no es BOT_PHONE=%s); ignorado",
                      to_number, BOT_PHONE)
             return
 
-        log.info("[IN  %s -> %s] type=%s", from_number, to_number, tipo)
+        log.info("[IN  %s -> %s] source=%s type=%s",
+                 from_number, to_number, source, tipo)
 
         # ─── DEDUP DE WEBHOOKS ───
         # YCloud puede reentregar el mismo mensaje. Si ya lo procesamos,
@@ -6446,13 +6580,153 @@ def admin_backup_list():
 
 @app.get("/webhook")
 def webhook_verify():
-    # YCloud permite configurar verify token en su panel; responde lo que envíen en ?challenge=
+    # Meta usa hub.verify_token/hub.challenge. YCloud histórico usa
+    # verify_token/challenge. Aceptamos ambos mientras dura la migración.
     token = request.args.get("verify_token") or request.args.get("hub.verify_token")
     challenge = request.args.get("challenge") or request.args.get("hub.challenge", "")
-    if token and token != YCLOUD_VERIFY_TOKEN:
-        log.warning("Verify token inválido: %s", token)
-        return "forbidden", 403
+    if token:
+        valid_tokens = {
+            t for t in (WHATSAPP_VERIFY_TOKEN, YCLOUD_VERIFY_TOKEN)
+            if t
+        }
+        if valid_tokens and token not in valid_tokens:
+            log.warning("Verify token inválido recibido")
+            return "forbidden", 403
+        if not valid_tokens:
+            log.warning("Verify token recibido pero no hay token configurado")
+            return "forbidden", 403
     return challenge or "ok", 200
+
+
+def _es_payload_meta_whatsapp(data) -> bool:
+    return (
+        isinstance(data, dict)
+        and data.get("object") == "whatsapp_business_account"
+        and isinstance(data.get("entry"), list)
+    )
+
+
+def _meta_phone_number_id_aceptado(phone_number_id: str) -> bool:
+    if not WHATSAPP_PHONE_NUMBER_ID:
+        return True
+    if not phone_number_id:
+        log.warning("[META WEBHOOK] sin phone_number_id; ignorado")
+        return False
+    if phone_number_id != WHATSAPP_PHONE_NUMBER_ID:
+        log.info(
+            "[META WEBHOOK] phone_number_id %s no coincide con WHATSAPP_PHONE_NUMBER_ID; ignorado",
+            phone_number_id,
+        )
+        return False
+    return True
+
+
+def _mensaje_meta_a_interno(message: dict, value: dict) -> dict | None:
+    metadata = value.get("metadata") or {}
+    phone_number_id = metadata.get("phone_number_id", "")
+    if not _meta_phone_number_id_aceptado(phone_number_id):
+        return None
+
+    from_number = message.get("from", "")
+    tipo = message.get("type", "")
+    if not from_number or not tipo:
+        log.warning("[META WEBHOOK] mensaje sin from/type: %s", message)
+        return None
+
+    display_phone = (
+        metadata.get("display_phone_number") or BOT_PHONE or phone_number_id
+    )
+    internal = {
+        "_source": "meta",
+        "_phone_number_id": phone_number_id,
+        "id": message.get("id", ""),
+        "wamid": message.get("id", ""),
+        "timestamp": message.get("timestamp", ""),
+        "from": from_number,
+        "to": display_phone,
+        "type": tipo,
+    }
+
+    if tipo == "text":
+        body = ((message.get("text") or {}).get("body") or "").strip()
+        internal["text"] = {"body": body}
+    elif tipo == "interactive":
+        internal["interactive"] = message.get("interactive") or {}
+    elif tipo in ("audio", "voice", "image", "sticker", "document", "video"):
+        internal[tipo] = message.get(tipo) or {}
+    elif tipo == "button":
+        button = message.get("button") or {}
+        internal["type"] = "interactive"
+        internal["interactive"] = {
+            "type": "button_reply",
+            "button_reply": {
+                "id": button.get("payload") or button.get("text") or "",
+                "title": button.get("text") or button.get("payload") or "",
+            },
+        }
+    else:
+        for key, value_obj in message.items():
+            if isinstance(value_obj, dict):
+                internal[key] = value_obj
+
+    return internal
+
+
+def _texto_log_meta(internal: dict) -> str:
+    tipo = internal.get("type", "")
+    if tipo == "text":
+        return ((internal.get("text") or {}).get("body") or "")[:300]
+    if tipo == "interactive":
+        interactive = internal.get("interactive") or {}
+        br = interactive.get("button_reply") or {}
+        lr = interactive.get("list_reply") or {}
+        return (
+            br.get("title")
+            or lr.get("title")
+            or br.get("id")
+            or lr.get("id")
+            or ""
+        )[:300]
+    return f"[{tipo}]"
+
+
+def _procesar_payload_meta(data: dict) -> None:
+    procesados = 0
+    status_count = 0
+    try:
+        for entry in data.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value") or {}
+                statuses = value.get("statuses") or []
+                if statuses:
+                    status_count += len(statuses)
+                    log.info("[META WEBHOOK] status recibido: %d", len(statuses))
+
+                messages = value.get("messages") or []
+                if not messages:
+                    continue
+
+                for message in messages:
+                    internal = _mensaje_meta_a_interno(message, value)
+                    if not internal:
+                        continue
+                    procesados += 1
+                    log.info(
+                        "[WEBHOOK] mensaje de usuario: from=%s type=%s body=%s",
+                        _mask_phone(internal.get("from", "")),
+                        internal.get("type", ""),
+                        _texto_log_meta(internal),
+                    )
+                    procesar_mensaje_ycloud(internal)
+        if procesados or status_count:
+            log.info(
+                "[META WEBHOOK] mensajes procesados=%d statuses=%d",
+                procesados, status_count,
+            )
+        else:
+            log.info("[META WEBHOOK] payload sin mensajes procesables")
+    except Exception:
+        log.error("Error procesando payload Meta:\n%s", traceback.format_exc())
 
 
 def _auto_pausar_por_takeover(client_phone: str) -> None:
@@ -6549,8 +6823,21 @@ def _procesar_eventos_webhook(eventos: list) -> None:
 @app.post("/webhook")
 def webhook_receive():
     try:
-        data = request.get_json(silent=True) or {}
-        log.info("[WEBHOOK] %s", json.dumps(data, ensure_ascii=False)[:500])
+        raw_body = request.get_data(as_text=True) or ""
+        log.info(
+            "[WEBHOOK] payload recibido: %s",
+            _redactar_secrets(raw_body)[:2000],
+        )
+        data = request.get_json(silent=True)
+        if data is None:
+            log.warning("[WEBHOOK] JSON inválido o vacío")
+            return jsonify({"received": True}), 200
+
+        if _es_payload_meta_whatsapp(data):
+            threading.Thread(
+                target=_procesar_payload_meta, args=(data,), daemon=True
+            ).start()
+            return jsonify({"received": True}), 200
 
         # YCloud manda un array o un objeto. Normalizamos.
         eventos = data if isinstance(data, list) else [data]
