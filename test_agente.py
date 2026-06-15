@@ -151,6 +151,37 @@ class TestTroceoMensajes(unittest.TestCase):
         self.assertTrue(all(p.strip() for p in partes))
 
 
+class TestPdfSoporte(unittest.TestCase):
+    def test_document_pdf_pasa_por_meta(self):
+        meta_calls = []
+        old_meta = agente.meta_descargar_media
+        old_ycloud = agente.ycloud_descargar_media
+        agente.meta_descargar_media = lambda media_id, media_obj=None: (
+            meta_calls.append((media_id, media_obj)) or b"%PDF-1.4 fake"
+        )
+        agente.ycloud_descargar_media = lambda media_id, media_obj=None: b"ycloud"
+        try:
+            blob, obj = agente.descargar_media_mensaje(
+                {"document": {"id": "pdf123", "mimeType": "application/pdf"}},
+                "document",
+                "meta",
+            )
+        finally:
+            agente.meta_descargar_media = old_meta
+            agente.ycloud_descargar_media = old_ycloud
+
+        self.assertEqual(blob, b"%PDF-1.4 fake")
+        self.assertEqual(obj["id"], "pdf123")
+        self.assertEqual(len(meta_calls), 1)
+
+    def test_tier_detectado_se_elimina(self):
+        t = agente._sanitizar_salida(
+            "[TIER_DETECTADO: tier=2-alto]\nPerfecto, te ayudo con eso."
+        )
+        self.assertNotIn("TIER_DETECTADO", t.upper())
+        self.assertIn("Perfecto", t)
+
+
 class TestPausas(unittest.TestCase):
     def setUp(self):
         # Reset config path to clean slate per test

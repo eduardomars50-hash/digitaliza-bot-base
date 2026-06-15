@@ -3805,6 +3805,7 @@ _TAG_KEYWORDS = (
     "CALENDARIO", "LEAD_CAPTURADO", "LEAD CAPTURADO",
     "EVENTO", "SISTEMA", "CMD_", "NECESITO_MAS_CONTEXTO",
     "QUIERE_CONTRATAR", "QUIERE_WEB",
+    "TIER_DETECTADO",
     "CONSULTAR", "AGENDAR",
     "ALERTA_PRECIO", "INTENTO_FUTURO", "ESCALACION",
     "COMPETIDOR", "PERDIDA", "REFERIDO",
@@ -3872,6 +3873,10 @@ def _sanitizar_salida(texto: str) -> str:
     #    una keyword de tag. Esto atrapa "[CALENDARIO:CONSULTAR:...]" y
     #    también "(calendario consulta 2024-05-24)".
     out = _INLINE_BRACKET_TAG_RE.sub("", out)
+
+    # 1a) Tags de clasificación interna que nunca deben salir al cliente,
+    #     aunque lleguen como texto plano.
+    out = re.sub(r"(?i)\[TIER_DETECTADO:[^\]]*\]", "", out)
 
     # 1b) Eliminar leaks in-line "keyword keyword ..." sin corchetes
     #     tipo "calendario consulta 2024-05-24" que aparezcan a mitad
