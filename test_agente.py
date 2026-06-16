@@ -141,6 +141,9 @@ class TestTroceoMensajes(unittest.TestCase):
     def test_limite_de_burbuja_whatsapp_es_corto(self):
         self.assertLessEqual(agente.MAX_CHARS_MENSAJE, 240)
 
+    def test_delay_entre_burbujas_es_humano(self):
+        self.assertGreaterEqual(agente.SEND_PART_DELAY_SECS, 5.0)
+
     def test_partido_por_frases(self):
         texto = (
             "Hola, gracias por escribirnos. "

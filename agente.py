@@ -66,6 +66,7 @@ CONTEXTO_DEFAULT = 12  # subimos de 5 a 12: más coherencia, bot deja de re-pres
 CONTEXTO_EXTENDIDO = 30
 MAX_CHARS_MENSAJE = 240
 MAX_PARTES_RESPUESTA = 2
+SEND_PART_DELAY_SECS = 5.0
 ADMIN_HISTORIAL_MAX = 40
 LEAD_UPDATE_COOLDOWN_HOURS = 12
 ESCALACION_COOLDOWN_HOURS = 2
@@ -2101,7 +2102,8 @@ def meta_enviar_texto(to_number: str, texto: str) -> tuple[bool, str]:
             )
             if not first_error:
                 first_error = f"excepción: {type(e).__name__}: {e}"[:240]
-        time.sleep(0.4)
+        if i < len(partes) - 1:
+            time.sleep(SEND_PART_DELAY_SECS)
     return any_ok, first_error
 
 
@@ -2165,7 +2167,8 @@ def ycloud_enviar_texto(from_number: str, to_number: str,
             log.exception("Error enviando mensaje a %s", to_number)
             if not first_error:
                 first_error = f"excepción: {type(e).__name__}: {e}"[:240]
-        time.sleep(0.4)  # pequeño respiro entre partes
+        if i < len(partes) - 1:
+            time.sleep(SEND_PART_DELAY_SECS)  # respiro humano entre burbujas
     return any_ok, first_error
 
 
