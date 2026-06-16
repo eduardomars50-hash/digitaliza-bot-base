@@ -401,21 +401,8 @@ NATURALIDAD (IMPORTANTE):
       T3 (tú): "Mucho gusto, le saludamos de Marz..." ← MAL, ya lo habían ubicado
     Correcto en T3: "Perfecto, con barberías ayudamos mucho con la agenda. ¿Cuántos mensajes al día le llegan?"
 
-- TIP DE ESTILO EN EL PRIMER MENSAJE (OBLIGATORIO SOLO EN EL PRIMER TURNO):
-  · En tu PRIMER mensaje de toda la conversación, DESPUÉS del saludo +
-    presentación y de tu primera pregunta, agrega un párrafo corto y suave
-    sugiriéndole al prospecto que mande sus ideas juntas en un mismo
-    mensaje para que la plática fluya mejor. Redáctalo como recomendación
-    amable, NUNCA como orden o regla.
-  · Varía la redacción (no copies literal el ejemplo), pero el fondo
-    siempre es el mismo: "ideas juntas en un párrafo > mensajes sueltos".
-  · Ejemplo de referencia (no lo pegues tal cual, varíalo):
-      "Ah, y un tip para que fluya mejor la plática: si puede
-       mandarme sus ideas juntas en un mismo mensaje en vez de
-       varios sueltos, le entiendo a la primera y no se me pierde
-       nada 🙌 Sin presión, como le acomode."
-  · NUNCA repitas este tip en mensajes posteriores. Si el historial
-    ya tiene cualquier mensaje tuyo, NO lo vuelvas a emitir.
+- No le des instrucciones al prospecto sobre cómo escribirte. El bot debe
+  adaptarse a sus mensajes, no pedirle que cambie su forma de escribir.
 
 - MEMORIA CONVERSACIONAL (REGLA DE ORO — léela DOS veces):
   Esta es LA diferencia entre un bot real y un bot tonto. El cliente
@@ -827,7 +814,7 @@ SEGURIDAD Y PROTECCIÓN (OBLIGATORIO)
    le pueda ayudar?" y ya.
 7. NUNCA generes contenido sexual, violento, ilegal o discriminatorio.
 8. Si te piden algo fuera de tu rol (escribir código, hacer tareas, contar chistes,
-   roleplay, etc.), redirige: "Solo puedo ayudarte con los servicios de Marz."
+   roleplay, etc.), redirige: "Solo puedo ayudarle con los servicios de Marz."
 9. NUNCA digas que eres de OpenAI, Google, ChatGPT o cualquier otra empresa.
    Si preguntan qué modelo eres o cómo funcionas: redirige natural —
    "Ese tipo de cosas no las manejo. ¿En qué del servicio de Marz
@@ -870,7 +857,7 @@ REGLAS ESTRICTAS:
      b) Nombre de su negocio
      c) Tipo de negocio (salón, consultorio, etc.)
      d) Ciudad (para saber si es Mérida)
-   Después dile: "Perfecto, un asesor te contacta pronto."
+   Después dile: "Perfecto, un asesor le contacta pronto."
 4. FOTOS — qué SÍ y qué NO mirar.
    SÍ analiza si la foto muestra algo del NEGOCIO del prospecto: su
    logo, su menú, su catálogo, su local por dentro, su pantalla actual,
@@ -1820,8 +1807,8 @@ def _bloque_perfil_historial(phone: str) -> list[dict]:
 
 GEMINI_MAX_REINTENTOS = 2
 GEMINI_FALLBACK_MSG = (
-    "Disculpa, tuve un problema técnico al procesar tu mensaje. "
-    "Un asesor te contacta en un momento."
+    "Disculpe, tuve un problema técnico al procesar su mensaje. "
+    "Un asesor le contacta en un momento."
 )
 
 
@@ -4035,7 +4022,7 @@ def _sanitizar_salida(texto: str) -> str:
             "[SANITIZER] Texto quedó vacío tras limpiar. Original: %r",
             original[:500],
         )
-        return "Permíteme revisar eso y te contesto en un momento."
+        return "Permítame revisar eso y le contesto en un momento."
 
     if out != original:
         log.warning(
@@ -5978,14 +5965,14 @@ def _process_message_group(msgs: list[dict]) -> None:
                 if not audio_bytes:
                     ycloud_enviar_texto(
                         to_number, from_number,
-                        "No pude escuchar bien tu audio, ¿me lo puedes escribir?"
+                        "No pude escuchar bien su audio, ¿me lo puede escribir?"
                     )
                     return
                 transcripcion = transcribir_audio(audio_bytes)
                 if not transcripcion:
                     ycloud_enviar_texto(
                         to_number, from_number,
-                        "No logré entender el audio. ¿Me lo escribes?"
+                        "No logré entender el audio. ¿Me lo puede escribir?"
                     )
                     return
                 log.info("[%s] Transcripción: %s", from_number, transcripcion[:120])
@@ -5999,7 +5986,7 @@ def _process_message_group(msgs: list[dict]) -> None:
                 if not img_bytes:
                     ycloud_enviar_texto(
                         to_number, from_number,
-                        "No pude ver tu imagen, ¿la puedes enviar de nuevo?"
+                        "No pude ver su imagen, ¿la puede enviar de nuevo?"
                     )
                     return
                 try:
@@ -6008,7 +5995,7 @@ def _process_message_group(msgs: list[dict]) -> None:
                     log.exception("No se pudo abrir imagen")
                     ycloud_enviar_texto(
                         to_number, from_number,
-                        "La imagen parece dañada, ¿me la reenvías?"
+                        "La imagen parece dañada, ¿me la reenvía?"
                     )
                     return
                 if caption:
@@ -6029,7 +6016,7 @@ def _process_message_group(msgs: list[dict]) -> None:
                 if not stk_bytes:
                     ycloud_enviar_texto(
                         to_number, from_number,
-                        "No pude ver tu sticker, ¿me lo reenvías?"
+                        "No pude ver su sticker, ¿me lo reenvía?"
                     )
                     return
                 try:
@@ -6134,7 +6121,7 @@ def _process_message_group(msgs: list[dict]) -> None:
             ycloud_enviar_texto(
                 to_number, from_number,
                 "Por ahora solo puedo procesar texto, audio, imágenes, "
-                "stickers, PDFs y videos. ¿Me lo puedes escribir o reenviar "
+                "stickers, PDFs y videos. ¿Me lo puede escribir o reenviar "
                 "en otro formato?"
             )
             return
@@ -6243,7 +6230,7 @@ def procesar_mensaje_ycloud(msg: dict) -> None:
             ycloud_enviar_texto(
                 to_number, from_number,
                 "Por ahora solo puedo procesar texto, audio, imágenes, "
-                "stickers, PDFs y videos. ¿Me lo puedes escribir o reenviar "
+                "stickers, PDFs y videos. ¿Me lo puede escribir o reenviar "
                 "en otro formato?"
             )
             return
@@ -6284,9 +6271,9 @@ def _procesar_click_boton_web(msg: dict, from_number: str,
     if btn_id == BTN_ID_BOT:
         ycloud_enviar_texto(
             to_number, from_number,
-            "¡Perfecto! Cuéntame: ¿qué tipo de negocio tienes y qué te "
-            "gustaría automatizar? Te explico exactamente cómo funciona "
-            "y cuánto cuesta para tu caso. 🚀"
+            "¡Perfecto! Cuénteme: ¿qué tipo de negocio tiene y qué le "
+            "gustaría automatizar? Le explico exactamente cómo funciona "
+            "y cuánto cuesta para su caso. 🚀"
         )
         return
 
@@ -6299,9 +6286,9 @@ def _procesar_click_boton_web(msg: dict, from_number: str,
             log.exception("[BTN_WEB] Error pausando chat para handover")
         ycloud_enviar_texto(
             to_number, from_number,
-            "¡Listo! Le aviso a Eduardo que quieres hablar directo con él. "
-            "Te responde en breve.\n\nMientras tanto, si quieres adelantar: "
-            "¿qué tipo de negocio tienes?"
+            "¡Listo! Le aviso a Eduardo que quiere hablar directo con él. "
+            "Le responde en breve.\n\nMientras tanto, si quiere adelantar: "
+            "¿qué tipo de negocio tiene?"
         )
         # Notificar a Eduardo en su número personal
         if OWNER_PHONE and BOT_PHONE:
