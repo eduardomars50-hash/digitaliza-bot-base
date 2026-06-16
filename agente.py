@@ -57,14 +57,18 @@ LEADS_DIR = DATA_DIR / "leads"
 PERFILES_DIR = DATA_DIR / "perfiles"
 CITAS_DIR = DATA_DIR / "citas"
 CITAS_ARCHIVO_DIR = CITAS_DIR / "archivo"
+ADMIN_HISTORY_PATH = DATA_DIR / "admin_historial.json"
 for d in (CONVERSACIONES_DIR, LEADS_DIR, PERFILES_DIR, CITAS_DIR, CITAS_ARCHIVO_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 MAX_HISTORIAL = 50
 CONTEXTO_DEFAULT = 12  # subimos de 5 a 12: más coherencia, bot deja de re-presentarse
 CONTEXTO_EXTENDIDO = 30
-MAX_CHARS_MENSAJE = 320
+MAX_CHARS_MENSAJE = 240
 MAX_PARTES_RESPUESTA = 2
+ADMIN_HISTORIAL_MAX = 40
+LEAD_UPDATE_COOLDOWN_HOURS = 12
+ESCALACION_COOLDOWN_HOURS = 2
 SENAL_MAS_CONTEXTO = "[NECESITO_MAS_CONTEXTO]"
 LEAD_TAG_RE = re.compile(r"\[LEAD_CAPTURADO:([^\]]+)\]", re.IGNORECASE)
 
@@ -462,9 +466,11 @@ NATURALIDAD (IMPORTANTE):
 
 - UN MENSAJE, UN PROPÓSITO:
   · No mandes dos mensajes seguidos con la misma pregunta reformulada.
-  · Si necesitas dar más de un dato, un solo mensaje con párrafos
-    separados es mejor que dos mensajes consecutivos.
-  · Máximo dos preguntas por mensaje. Idealmente una.
+  · Si necesitas dar más de un dato, prioriza lo más útil y guarda lo
+    demás para cuando el prospecto lo pida.
+  · Máximo dos burbujas por respuesta normal. Si salen más, estás
+    explicando de más.
+  · Máximo una pregunta por respuesta.
 
 - Evita frases excesivamente rígidas o de folleto.
   Habla suelto pero formal: "Sí, claro", "Perfecto", "Listo", "Con gusto", "Claro que sí".
@@ -521,7 +527,8 @@ ESTILO DE COMUNICACIÓN (CRÍTICO — LÉELO DOS VECES)
 SUENA COMO UNA PERSONA DEL EQUIPO CONTESTANDO DESDE SU CELULAR, NO COMO UN FOLLETO.
 
 REGLAS DURAS:
-1. MÁXIMO 2-3 ORACIONES POR MENSAJE. Si hay que decir más, parte en varios mensajes cortos.
+1. MÁXIMO 1-2 ORACIONES POR MENSAJE. En una respuesta normal manda 1 o 2 burbujas, no 4, 5 o 6.
+   Si el tema exige explicar más, da primero el resumen y pregunta qué parte quiere ampliar.
 2. NADA de listas numeradas (1. 2. 3.) ni bullet points (-, *, •). Se ve robótico en WhatsApp.
 3. NADA de encabezados tipo "**Precio Setup:**" ni formato tipo documento.
 4. Emojis con moderación: 1-2 por mensaje máximo, y NO en todos. Muchos mensajes van sin emoji.
@@ -533,7 +540,7 @@ REGLAS DURAS:
    NUNCA uses slang tipo "bro", "wey", "men", "crack", "máquina", "compa", "carnal".
    NUNCA uses muletillas coloquiales tipo "qué onda", "órale", "jeje", "jaja", "haha", "va", "aquí ando", "aquí estoy", "aquí estamos".
    Eres asistente de una empresa que trata con respeto al cliente. Profesional siempre.
-6. Responde SOLO lo que te preguntan. No agregues info extra no solicitada.
+6. Responde SOLO lo que te preguntan. No agregues contexto, venta ni explicación extra no solicitada.
 7. NO repitas información que ya diste antes en la conversación.
 8. NO vuelvas a vender si el prospecto cerró la conversación.
    Si te dicen "ok gracias" / "va" / "perfecto" → respuesta CORTA tipo
@@ -1299,6 +1306,56 @@ def guardar_mensaje(phone: str, role: str, content: str) -> None:
         # mtimes (conv vs perfil) y regenera lazy solo cuando alguien lo
         # pide y el conv cambió. Esto evita doble llamada Gemini por
         # turno (una para perfil, otra para responder).
+
+
+def _cargar_historial_admin() -> list[dict]:
+    if not ADMIN_HISTORY_PATH.exists():
+        return []
+    try:
+        data = json.loads(ADMIN_HISTORY_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        log.exception("Error leyendo historial admin")
+        return []
+
+
+def _limpiar_respuesta_admin_para_historial(texto: str) -> str:
+    """Quita el footer tecnico antes de alimentar memoria admin."""
+    if not texto:
+        return texto
+    return re.sub(r"\n\n— \[v: [^\]]+\]\s*$", "", texto.strip())
+
+
+def _guardar_turno_admin(texto_usuario: str, respuesta: str) -> None:
+    try:
+        hist = _cargar_historial_admin()
+        now = datetime.utcnow().isoformat() + "Z"
+        hist.append({"role": "user", "content": texto_usuario, "ts": now})
+        hist.append({
+            "role": "assistant",
+            "content": _limpiar_respuesta_admin_para_historial(respuesta),
+            "ts": now,
+        })
+        hist = hist[-ADMIN_HISTORIAL_MAX:]
+        ADMIN_HISTORY_PATH.write_text(
+            json.dumps(hist, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        log.exception("Error guardando historial admin")
+
+
+def _formatear_historial_admin(historial: list[dict], limite: int = 18) -> str:
+    if not historial:
+        return "(sin historial admin reciente)"
+    lineas = []
+    for m in historial[-limite:]:
+        role = "Eduardo" if m.get("role") == "user" else "Asistente"
+        content = (m.get("content") or "").strip()
+        if len(content) > 450:
+            content = content[:450] + "..."
+        lineas.append(f"{role}: {content}")
+    return "\n".join(lineas)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -3130,15 +3187,29 @@ def notificar_lead_calificado(phone: str) -> None:
         except Exception:
             anterior = {}
         if (anterior.get("nombre") == nombre
-                and anterior.get("tipo_negocio") == tipo):
+                and anterior.get("tipo_negocio") == tipo
+                and anterior.get("ciudad") == ciudad):
             return  # ya notificado y sin cambios en los campos clave
-        _notificar_owner(
-            f"📝 Lead actualizado\n"
-            f"Nombre: {nombre}\n"
-            f"Negocio: {tipo}\n"
-            f"Ciudad: {ciudad}\n"
-            f"Número: {phone}"
+        try:
+            ts_prev = anterior.get("ts", "")
+            dt_prev = datetime.fromisoformat(ts_prev.replace("Z", "+00:00"))
+            horas = (
+                datetime.now(dt_prev.tzinfo) - dt_prev
+            ).total_seconds() / 3600
+        except Exception:
+            horas = LEAD_UPDATE_COOLDOWN_HOURS
+        cambio_fuerte = (
+            anterior.get("nombre") != nombre
+            or anterior.get("tipo_negocio") != tipo
         )
+        if cambio_fuerte and horas >= LEAD_UPDATE_COOLDOWN_HOURS:
+            _notificar_owner(
+                f"📝 Lead actualizado\n"
+                f"Nombre: {nombre}\n"
+                f"Negocio: {tipo}\n"
+                f"Ciudad: {ciudad}\n"
+                f"Número: {phone}"
+            )
     else:
         _notificar_owner(
             f"🔥 Lead calificado!\n"
@@ -3329,6 +3400,18 @@ def notificar_intento_futuro(phone: str) -> None:
 
 
 def notificar_escalacion(phone: str) -> None:
+    seg_path = SEGUIMIENTO_DIR / f"{normalizar_numero(phone)}_escalacion.flag"
+    if seg_path.exists():
+        try:
+            ts_prev = seg_path.read_text(encoding="utf-8").strip()
+            dt_prev = datetime.fromisoformat(ts_prev.replace("Z", "+00:00"))
+            horas = (
+                datetime.now(dt_prev.tzinfo) - dt_prev
+            ).total_seconds() / 3600
+            if horas < ESCALACION_COOLDOWN_HOURS:
+                return
+        except Exception:
+            pass
     perfil = _perfil_cliente(phone)
     nombre = perfil.get("nombre", phone)
     _notificar_owner(
@@ -3338,6 +3421,10 @@ def notificar_escalacion(phone: str) -> None:
         f"El prospecto pidió hablar con una persona o muestra frustración. "
         f"Escríbele directo cuanto antes."
     )
+    try:
+        seg_path.write_text(datetime.utcnow().isoformat() + "Z")
+    except Exception:
+        log.exception("Error guardando flag de escalación")
 
 
 def _aplicar_cita_confirmada(phone: str, event_id: str) -> None:
@@ -4177,11 +4264,26 @@ REGLA: tu historial admin es información VÁLIDA y AUTORITATIVA. Si
 Eduardo te dijo "X es Y" hace 5, 10 o 20 turnos, eso sigue siendo
 verdad ahora. Úsalo. No le hagas repetir.
 
+REFERENCIAS CORTAS Y CONTEXTO RECIENTE (CRÍTICO):
+- Si Eduardo dice "sí", "ese", "él", "ella", "a ese", "a él",
+  "me refiero a él", resuelve la referencia usando el historial admin
+  reciente. NO vuelvas a preguntar si el turno anterior ya trae un
+  candidato claro.
+- Si acabas de preguntarle "¿te refieres a Kerry (número)?" y Eduardo
+  responde "sí", eso confirma a Kerry y ese número. Procede.
+- Si Eduardo dice "escríbele a Kerry", "dile a Kerry", "mándale a Kerry",
+  busca Kerry en el inventario, en alertas recientes y en historial admin.
+  Si hay un solo Kerry claro, úsalo sin pedir el número otra vez.
+- Si Eduardo dicta el contenido en un turno y en el siguiente aclara el
+  destinatario, combina ambos turnos. No le pidas que repita el mensaje.
+- Solo pregunta de nuevo cuando haya dos candidatos plausibles o falte
+  tanto destinatario como contenido.
+
 ═══════════════════════════════════════════════════════════════
-FOOTER DE DEBUG AL FINAL DE CADA RESPUESTA (NUNCA LO IMITES)
+FOOTER DE DEBUG EN TURNOS CON ACCIONES (NUNCA LO IMITES)
 ═══════════════════════════════════════════════════════════════
-El servidor agrega automáticamente al FINAL de tu respuesta a Eduardo
-un footer del tipo:
+Cuando ejecutas acciones reales, el servidor puede agregar al FINAL de
+tu respuesta a Eduardo un footer del tipo:
    — [v: 0f348d1 · envíos: 0t/0p · etiquetas: 0 · errores: 0]
 
 Ese footer lo pone EL SERVER, no tú. NUNCA lo imites en tu narrativa.
@@ -4193,6 +4295,7 @@ Eduardo usa ese footer para verificar la verdad. Si el footer dice
 "envíos: 0t/0p" significa que NO se mandó NADA al cliente este turno —
 sin importar lo que tú hayas escrito arriba. Por eso TÚ no debes
 escribir confirmaciones falsas: el footer te delata siempre.
+Si no hubo acciones, probablemente no aparecerá footer.
 
 ═══════════════════════════════════════════════════════════════
 PROHIBIDO ESCRIBIR FORMATO DE CONFIRMACIÓN DEL SISTEMA (CRÍTICO)
@@ -4742,6 +4845,9 @@ _PERFIL_PROMPT = (
     "\"ciudad\": ..., \"interes\": ...}\n"
     "- negocio = nombre propio del negocio (ej 'Barber Joe').\n"
     "- tipo_negocio = giro general (ej 'barbería', 'panadería artesanal', 'consultorio dental').\n"
+    "- ciudad = ciudad SOLO si el cliente la dijo explícitamente. "
+    "No la infieras por lada, ejemplos, contexto ni por imaginación.\n"
+    "- Si un dato no aparece literal en la conversación, usa \"desconocido\".\n"
     "- interes = 1 línea con qué servicio o info le interesa.\n"
     "Responde SOLO el JSON, sin texto adicional, sin markdown."
 )
@@ -4984,6 +5090,29 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
     notas = []
     ver = []
 
+    def _borrar_cliente_archivos(phone_norm: str) -> list[str]:
+        removed = []
+        paths = [
+            CONVERSACIONES_DIR / f"{phone_norm}.json",
+            CONVERSACIONES_DIR / f"+{phone_norm}.json",
+            LEADS_DIR / f"{phone_norm}.json",
+            LEADS_DIR / f"+{phone_norm}.json",
+            PERFILES_DIR / f"{phone_norm}.json",
+            PERFILES_DIR / f"+{phone_norm}.json",
+        ]
+        for pattern_dir in (SEGUIMIENTO_DIR, CITAS_DIR, CITAS_ARCHIVO_DIR):
+            if pattern_dir.exists():
+                paths.extend(pattern_dir.glob(f"{phone_norm}*"))
+                paths.extend(pattern_dir.glob(f"+{phone_norm}*"))
+        for p in paths:
+            try:
+                if p.exists() and p.is_file():
+                    p.unlink()
+                    removed.append(str(p.relative_to(DATA_DIR)))
+            except Exception:
+                log.exception("No pude borrar %s", p)
+        return removed
+
     def _enviar(m):
         phone_raw = m.group(1).strip()
         cuerpo = m.group(2).strip()
@@ -5138,15 +5267,11 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
     def _borrar(m):
         phone_raw = m.group(1).strip()
         phone_norm = normalizar_numero(phone_raw)
-        conv = CONVERSACIONES_DIR / f"{phone_norm}.json"
-        lead = LEADS_DIR / f"{phone_norm}.json"
-        perfil = PERFILES_DIR / f"{phone_norm}.json"
-        removed = []
-        for p in (conv, lead, perfil):
-            if p.exists():
-                p.unlink()
-                removed.append(p.name)
-        notas.append(f"✅ Borrado +{phone_norm}: {', '.join(removed) or 'nada que borrar'}")
+        removed = _borrar_cliente_archivos(phone_norm)
+        notas.append(
+            f"✅ Borrado +{phone_norm}: "
+            f"{', '.join(removed) if removed else 'nada que borrar'}"
+        )
         return ""
 
     texto = CMD_BORRAR_RE.sub(_borrar, texto)
@@ -5254,21 +5379,21 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
     if notas:
         texto = (texto.strip() + "\n\n" + "\n".join(notas)).strip()
 
-    # Footer de debug: deja constancia VERIFICABLE de qué hizo el server
-    # en este turno. Si el bot dice "✅ enviado" pero el footer muestra
-    # 0 envíos, Eduardo sabe que mintió. Si el commit no es el último,
-    # Eduardo sabe que el deploy aún no aplicó.
+    # Footer de debug: solo aparece cuando hubo una acción verificable.
+    # En respuestas normales a Eduardo ensucia el chat y crea una burbuja
+    # extra; cuando sí hay envíos/errores/etiquetas sigue siendo útil.
     n_envios_texto = sum(1 for n in notas if "Enviado a +" in n)
     n_envios_plant = sum(1 for n in notas if "Plantilla enviada a +" in n)
     n_etiquetas = sum(1 for n in notas if "etiquetado como" in n)
     n_errores = sum(1 for n in notas if n.startswith("❌"))
-    footer = (
-        f"\n\n— [v: {_COMMIT_HASH} · "
-        f"envíos: {n_envios_texto}t/{n_envios_plant}p · "
-        f"etiquetas: {n_etiquetas} · "
-        f"errores: {n_errores}]"
-    )
-    texto = texto.strip() + footer
+    if notas or bot_dice_que_mando:
+        footer = (
+            f"\n\n— [v: {_COMMIT_HASH} · "
+            f"envíos: {n_envios_texto}t/{n_envios_plant}p · "
+            f"etiquetas: {n_etiquetas} · "
+            f"errores: {n_errores}]"
+        )
+        texto = texto.strip() + footer
 
     return texto.strip(), ver
 
@@ -5502,6 +5627,7 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         return
 
     contexto = _inventario_prospectos()
+    historial_admin = _formatear_historial_admin(_cargar_historial_admin())
 
     # Incluir alertas de seguridad si Eduardo pregunta
     sec_context = ""
@@ -5541,6 +5667,7 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         prompt_text = (
             f"FECHA DE HOY: {fecha_hoy}\n\n"
             f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\n"
+            f"HISTORIAL ADMIN RECIENTE:\n{historial_admin}\n\n"
             f"EDUARDO MANDÓ UN ARCHIVO ({etiqueta}). Léelo/Analízalo y "
             f"responde a lo que pide.\n\n"
             f"MENSAJE DE EDUARDO (o caption del archivo):\n{pregunta}"
@@ -5557,6 +5684,7 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         prompt_text = (
             f"FECHA DE HOY: {fecha_hoy}\n\n"
             f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\n"
+            f"HISTORIAL ADMIN RECIENTE:\n{historial_admin}\n\n"
             f"EDUARDO MANDÓ UNA IMAGEN. "
             f"Interpreta qué muestra y responde a lo que pide.\n\n"
             f"MENSAJE DE EDUARDO (o caption de la imagen):\n{pregunta}"
@@ -5570,6 +5698,7 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         mensaje = (
             f"FECHA DE HOY: {fecha_hoy}\n\n"
             f"CONTEXTO ACTUAL:\n{contexto}{sec_context}\n\n"
+            f"HISTORIAL ADMIN RECIENTE:\n{historial_admin}\n\n"
             f"PREGUNTA DE EDUARDO:\n{texto_usuario}"
         )
         resp = modelo.generate_content(mensaje)
@@ -5587,6 +5716,7 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
         segundo = modelo.generate_content(
             f"FECHA DE HOY: {fecha_hoy}\n\n"
             f"CONTEXTO ACTUAL:\n{contexto}\n\n"
+            f"HISTORIAL ADMIN RECIENTE:\n{historial_admin}\n\n"
             f"CONVERSACIONES COMPLETAS SOLICITADAS:\n{extra}\n\n"
             f"PREGUNTA ORIGINAL:\n{texto_usuario}"
         )
@@ -5597,6 +5727,7 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
     if not respuesta:
         respuesta = "(sin respuesta del asistente)"
 
+    _guardar_turno_admin(texto_usuario, respuesta)
     ycloud_enviar_texto(to_number, OWNER_PHONE, respuesta)
 
 

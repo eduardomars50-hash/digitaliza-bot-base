@@ -139,7 +139,7 @@ class TestParseHora(unittest.TestCase):
 
 class TestTroceoMensajes(unittest.TestCase):
     def test_limite_de_burbuja_whatsapp_es_corto(self):
-        self.assertLessEqual(agente.MAX_CHARS_MENSAJE, 320)
+        self.assertLessEqual(agente.MAX_CHARS_MENSAJE, 240)
 
     def test_partido_por_frases(self):
         texto = (
@@ -725,6 +725,90 @@ class TestComandosEtiquetar(unittest.TestCase):
         leak = "Listo, voy a [CMD_ETIQUETAR: +52... | Pepe] al cliente."
         limpio = agente._sanitizar_salida(leak)
         self.assertNotIn("ETIQUETAR", limpio.upper())
+
+    def test_cmd_borrar_elimina_estado_completo(self):
+        phone = "525612340001"
+        for p in (
+            agente.CONVERSACIONES_DIR / f"{phone}.json",
+            agente.LEADS_DIR / f"{phone}.json",
+            agente.PERFILES_DIR / f"{phone}.json",
+            agente.SEGUIMIENTO_DIR / f"{phone}_lead_calificado.json",
+            agente.SEGUIMIENTO_DIR / f"{phone}_quiere_contratar.flag",
+            agente.CITAS_DIR / f"{phone}_abc.json",
+        ):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("{}", encoding="utf-8")
+        agente._ejecutar_comandos_admin(f"[CMD_BORRAR: +{phone}]")
+        self.assertFalse((agente.CONVERSACIONES_DIR / f"{phone}.json").exists())
+        self.assertFalse((agente.LEADS_DIR / f"{phone}.json").exists())
+        self.assertFalse((agente.PERFILES_DIR / f"{phone}.json").exists())
+        self.assertFalse(
+            (agente.SEGUIMIENTO_DIR / f"{phone}_lead_calificado.json").exists()
+        )
+        self.assertFalse(
+            (agente.SEGUIMIENTO_DIR / f"{phone}_quiere_contratar.flag").exists()
+        )
+        self.assertFalse((agente.CITAS_DIR / f"{phone}_abc.json").exists())
+
+    def test_respuesta_admin_normal_no_agrega_footer(self):
+        texto, ver = agente._ejecutar_comandos_admin("Claro, lo reviso.")
+        self.assertEqual(ver, [])
+        self.assertEqual(texto, "Claro, lo reviso.")
+        self.assertNotIn("envíos:", texto)
+
+
+class TestAdminMemoria(unittest.TestCase):
+    def test_historial_admin_se_guarda_y_formatea(self):
+        old_path = agente.ADMIN_HISTORY_PATH
+        agente.ADMIN_HISTORY_PATH = Path(_TMP_DATA) / "admin_hist_test.json"
+        try:
+            agente._guardar_turno_admin("dile a Kerry hola", "Procesando.")
+            hist = agente._cargar_historial_admin()
+            texto = agente._formatear_historial_admin(hist)
+        finally:
+            agente.ADMIN_HISTORY_PATH = old_path
+        self.assertIn("Eduardo: dile a Kerry hola", texto)
+        self.assertIn("Asistente: Procesando.", texto)
+
+    def test_prompt_admin_resuelve_referencias_recientes(self):
+        self.assertIn("me refiero a él", agente.ADMIN_SYSTEM_PROMPT)
+        self.assertIn("historial admin", agente.ADMIN_SYSTEM_PROMPT.lower())
+
+
+class TestNotificacionesLead(unittest.TestCase):
+    def test_lead_actualizado_no_spamea_en_cooldown(self):
+        phone = "525612340002"
+        calls = []
+        perfiles = [
+            {
+                "nombre": "Kerry Caverga",
+                "tipo_negocio": "créditos automotrices",
+                "ciudad": "Mérida",
+                "interes": "automatizar WhatsApp",
+            },
+            {
+                "nombre": "Kerry Caverga",
+                "tipo_negocio": "galería de arte",
+                "ciudad": "Nueva Delhi",
+                "interes": "automatizar WhatsApp",
+            },
+        ]
+        old_perfil = agente._perfil_cliente
+        old_notify = agente._notificar_owner
+        agente._perfil_cliente = lambda _phone: perfiles.pop(0)
+        agente._notificar_owner = lambda mensaje: calls.append(mensaje)
+        try:
+            agente.notificar_lead_calificado(phone)
+            agente.notificar_lead_calificado(phone)
+        finally:
+            agente._perfil_cliente = old_perfil
+            agente._notificar_owner = old_notify
+        self.assertEqual(len(calls), 1)
+        self.assertIn("Lead calificado", calls[0])
+
+    def test_prompt_perfil_no_infiere_ciudad(self):
+        self.assertIn("ciudad SOLO si el cliente la dijo explícitamente",
+                      agente._PERFIL_PROMPT)
 
 
 if __name__ == "__main__":
