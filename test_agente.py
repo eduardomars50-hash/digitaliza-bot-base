@@ -138,6 +138,9 @@ class TestParseHora(unittest.TestCase):
 
 
 class TestTroceoMensajes(unittest.TestCase):
+    def test_limite_de_burbuja_whatsapp_es_corto(self):
+        self.assertLessEqual(agente.MAX_CHARS_MENSAJE, 320)
+
     def test_partido_por_frases(self):
         texto = (
             "Hola, gracias por escribirnos. "
