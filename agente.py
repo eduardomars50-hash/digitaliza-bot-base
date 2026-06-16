@@ -64,6 +64,7 @@ MAX_HISTORIAL = 50
 CONTEXTO_DEFAULT = 12  # subimos de 5 a 12: más coherencia, bot deja de re-presentarse
 CONTEXTO_EXTENDIDO = 30
 MAX_CHARS_MENSAJE = 700
+MAX_PARTES_RESPUESTA = 2
 SENAL_MAS_CONTEXTO = "[NECESITO_MAS_CONTEXTO]"
 LEAD_TAG_RE = re.compile(r"\[LEAD_CAPTURADO:([^\]]+)\]", re.IGNORECASE)
 
@@ -361,7 +362,7 @@ IDENTIDAD:
   oculto).
 
 NATURALIDAD (IMPORTANTE):
-- Habla como una persona real del equipo contestando rápido desde su celular.
+- Habla como una persona real del equipo contestando con calma desde su celular.
 - No uses a Eduardo como cierre automático ni como primera salida.
   Si el cliente aún está explorando, usa "alguien del equipo" o
   "un asesor". Reserva "Eduardo" para cuando ya haya intención clara.
@@ -1992,7 +1993,7 @@ def meta_enviar_texto(to_number: str, texto: str) -> tuple[bool, str]:
     if not destino:
         return False, "destino vacío"
 
-    partes = _trocear(texto, MAX_CHARS_MENSAJE)
+    partes = _compactar_partes_envio(_trocear(texto, MAX_CHARS_MENSAJE))
     any_ok = False
     first_error = ""
     headers = {
@@ -2056,7 +2057,7 @@ def ycloud_enviar_texto(from_number: str, to_number: str,
     if _meta_cloud_configurada():
         return meta_enviar_texto(to_number, texto)
 
-    partes = _trocear(texto, MAX_CHARS_MENSAJE)
+    partes = _compactar_partes_envio(_trocear(texto, MAX_CHARS_MENSAJE))
     any_ok = False
     first_error = ""
     for i, parte in enumerate(partes):
@@ -2299,6 +2300,33 @@ def _trocear(texto: str, limite: int) -> list[str]:
                 continue
             partes.append(trozo.strip())
     return partes
+
+
+def _compactar_partes_envio(partes: list[str],
+                            limite: int = MAX_CHARS_MENSAJE,
+                            max_partes: int = MAX_PARTES_RESPUESTA) -> list[str]:
+    """Empaqueta varios parrafos cortos para evitar ráfagas robóticas.
+
+    No trunca contenido: si no cabe en max_partes respetando el limite,
+    devuelve los grupos que hagan falta.
+    """
+    partes = [p.strip() for p in partes if p and p.strip()]
+    if len(partes) <= max_partes:
+        return partes
+
+    grupos: list[str] = []
+    actual = ""
+    for parte in partes:
+        candidato = parte if not actual else f"{actual}\n\n{parte}"
+        if len(candidato) <= limite:
+            actual = candidato
+            continue
+        if actual:
+            grupos.append(actual)
+        actual = parte
+    if actual:
+        grupos.append(actual)
+    return grupos
 
 
 # ─────────────────────────────────────────────────────────────
@@ -5595,7 +5623,7 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
 
 BUFFER_WAIT_SECS = 10.0
 BUFFER_MAX_SECS = 20.0
-BUFFER_MAX_MSGS = 6
+BUFFER_MAX_MSGS = 20
 
 _MSG_BUFFER: dict[str, dict] = {}
 _BUFFER_LOCK = Lock()

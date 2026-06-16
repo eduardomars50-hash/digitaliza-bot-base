@@ -158,6 +158,19 @@ class TestTroceoMensajes(unittest.TestCase):
     def test_buffer_espera_mas_para_agrupar(self):
         self.assertGreaterEqual(agente.BUFFER_WAIT_SECS, 10.0)
         self.assertGreaterEqual(agente.BUFFER_MAX_SECS, 20.0)
+        self.assertGreaterEqual(agente.BUFFER_MAX_MSGS, 20)
+
+    def test_partes_cortas_se_compactan_para_no_spamear(self):
+        partes = [
+            "Primero, una aclaración corta.",
+            "Segundo, otro punto breve.",
+            "Tercero, una pregunta concreta.",
+            "Cuarto, cierre sencillo.",
+        ]
+        compactadas = agente._compactar_partes_envio(partes, limite=180, max_partes=2)
+        self.assertLessEqual(len(compactadas), 2)
+        self.assertIn("Primero", compactadas[0])
+        self.assertIn("Cuarto", "\n\n".join(compactadas))
 
 
 class TestPdfSoporte(unittest.TestCase):
