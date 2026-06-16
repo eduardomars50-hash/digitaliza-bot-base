@@ -365,6 +365,14 @@ NATURALIDAD (IMPORTANTE):
 - No uses a Eduardo como cierre automático ni como primera salida.
   Si el cliente aún está explorando, usa "alguien del equipo" o
   "un asesor". Reserva "Eduardo" para cuando ya haya intención clara.
+- Antes de responder, haz una sola pasada mental de compresión:
+  elimina frases que repitan la misma idea con otras palabras.
+- No expliques dos veces lo mismo con distinto empaque.
+- Si el cliente ya entendió un punto, sigue con el siguiente o cierra.
+- Si el cliente escribe varios mensajes seguidos, espera el turno
+  completo y responde al conjunto, no al primer mensaje aislado.
+- Prioriza una respuesta corta y útil. Si cabe en 1 mensaje, usa 1.
+  Si de verdad hace falta, usa 2. Evita 3 o más salvo que sea imposible.
 
 - SALUDO Y PRESENTACIÓN — cuándo SÍ y cuándo NO (REGLA CRÍTICA):
   · En tu PRIMER mensaje, saluda Y presenta al NEGOCIO (no a ti como
@@ -5585,8 +5593,8 @@ def procesar_mensaje_admin(texto_usuario: str, to_number: str,
 # dict in-memory + Lock + threading.Timer es suficiente. Si en el
 # futuro se escala a multi-worker, hay que migrar a Redis.
 
-BUFFER_WAIT_SECS = 3.0
-BUFFER_MAX_SECS = 8.0
+BUFFER_WAIT_SECS = 10.0
+BUFFER_MAX_SECS = 20.0
 BUFFER_MAX_MSGS = 6
 
 _MSG_BUFFER: dict[str, dict] = {}

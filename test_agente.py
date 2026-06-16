@@ -155,6 +155,10 @@ class TestTroceoMensajes(unittest.TestCase):
         partes = agente._trocear(texto, 200)
         self.assertEqual(partes, ["Primero.", "Segundo.", "Tercero."])
 
+    def test_buffer_espera_mas_para_agrupar(self):
+        self.assertGreaterEqual(agente.BUFFER_WAIT_SECS, 10.0)
+        self.assertGreaterEqual(agente.BUFFER_MAX_SECS, 20.0)
+
 
 class TestPdfSoporte(unittest.TestCase):
     def test_document_pdf_pasa_por_meta(self):
