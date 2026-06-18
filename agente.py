@@ -50,7 +50,7 @@ GEMINI_MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 PORT = int(os.environ.get("PORT", "5000"))
 OWNER_PHONE = os.environ.get("OWNER_PHONE", "525635849043")
-BOT_PHONE = os.environ.get("BOT_PHONE", "525631832858")
+BOT_PHONE = os.environ.get("BOT_PHONE", "525638678463")
 
 CONVERSACIONES_DIR = DATA_DIR / "conversaciones"
 LEADS_DIR = DATA_DIR / "leads"
@@ -1277,14 +1277,18 @@ def cargar_historial(phone: str) -> list[dict]:
         return []
 
 
-def guardar_mensaje(phone: str, role: str, content: str) -> None:
+def guardar_mensaje_extendido(phone: str, role: str, content: str, **extra) -> None:
     with _lock_for(phone):
         historial = cargar_historial(phone)
-        historial.append({
+        entry = {
             "role": role,
             "content": content,
             "ts": datetime.utcnow().isoformat() + "Z",
-        })
+        }
+        for key, value in extra.items():
+            if value is not None:
+                entry[key] = value
+        historial.append(entry)
         historial = historial[-MAX_HISTORIAL:]
         _conv_path(phone).write_text(
             json.dumps(historial, ensure_ascii=False, indent=2),
@@ -1294,6 +1298,10 @@ def guardar_mensaje(phone: str, role: str, content: str) -> None:
         # mtimes (conv vs perfil) y regenera lazy solo cuando alguien lo
         # pide y el conv cambió. Esto evita doble llamada Gemini por
         # turno (una para perfil, otra para responder).
+
+
+def guardar_mensaje(phone: str, role: str, content: str) -> None:
+    guardar_mensaje_extendido(phone, role, content)
 
 
 def _cargar_historial_admin() -> list[dict]:
@@ -2941,7 +2949,7 @@ def _enviar_recordatorio_cita(
         params = [nombre, fecha_str, hora_str, nombre_negocio]
     else:
         params = [nombre, hora_str, nombre_negocio]
-    from_e164 = "+" + normalizar_numero(BOT_PHONE or "525631832858")
+    from_e164 = "+" + normalizar_numero(BOT_PHONE or "525638678463")
     to_e164 = "+" + normalizar_numero(cita["phone"])
     try:
         ok, err = ycloud_enviar_plantilla(
@@ -3127,7 +3135,7 @@ def _notificar_owner(mensaje: str) -> None:
     """Manda mensaje proactivo al dueño si las notificaciones están activas."""
     if not OWNER_PHONE or not notificaciones_activas():
         return
-    from_number = "+" + normalizar_numero(BOT_PHONE or "525631832858")
+    from_number = "+" + normalizar_numero(BOT_PHONE or "525638678463")
     try:
         ycloud_enviar_texto(from_number, OWNER_PHONE, mensaje)
     except Exception:
@@ -3693,7 +3701,7 @@ def _enviar_outbound_inactivo(
     (la misma que el seguimiento manual con CMD_ENVIAR_PLANTILLA)."""
     if intento not in (1, 2):
         return False
-    from_e164 = "+" + normalizar_numero(BOT_PHONE or "525631832858")
+    from_e164 = "+" + normalizar_numero(BOT_PHONE or "525638678463")
     to_e164 = "+" + normalizar_numero(phone)
     try:
         ok, err = ycloud_enviar_plantilla(
@@ -4700,6 +4708,595 @@ def _listar_pausados() -> list[dict]:
     return vivos
 
 
+def _admin_token_desde_request() -> str:
+    auth = (request.headers.get("Authorization", "") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+
+    token = (request.headers.get("X-Admin-Token", "") or "").strip()
+    if token:
+        return token
+
+    token = (request.args.get("token", "") or "").strip()
+    if token:
+        return token
+
+    try:
+        body = request.get_json(silent=True) or {}
+    except Exception:
+        body = {}
+    return str(body.get("token", "") or "").strip()
+
+
+def _admin_token_valido() -> bool:
+    token = _admin_token_desde_request()
+    return bool(BACKUP_ADMIN_TOKEN and token == BACKUP_ADMIN_TOKEN)
+
+
+def _parse_ts_utc(valor: str) -> datetime | None:
+    if not valor or not isinstance(valor, str):
+        return None
+    raw = valor.strip()
+    if not raw:
+        return None
+    try:
+        if raw.endswith("Z"):
+            return datetime.fromisoformat(raw[:-1])
+        return datetime.fromisoformat(raw)
+    except Exception:
+        pass
+    if raw.isdigit():
+        try:
+            return datetime.utcfromtimestamp(int(raw))
+        except Exception:
+            return None
+    return None
+
+
+def _fmt_ts_corto(valor: str) -> str:
+    dt = _parse_ts_utc(valor)
+    if dt is None:
+        return valor or ""
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def _texto_corto(valor: str, limite: int = 140) -> str:
+    texto = " ".join((valor or "").split())
+    if len(texto) <= limite:
+        return texto
+    return texto[: max(0, limite - 1)].rstrip() + "…"
+
+
+def _leer_perfil_cacheado(phone: str) -> dict:
+    phone_norm = normalizar_numero(phone)
+    if not phone_norm:
+        return {}
+    perfil_path = PERFILES_DIR / f"{phone_norm}.json"
+    if not perfil_path.exists():
+        return {}
+    try:
+        data = json.loads(perfil_path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        log.exception("[COEXISTENCIA] Error leyendo perfil cacheado de %s", phone_norm)
+        return {}
+
+
+def _resumen_chat_coexistencia(
+    phone: str,
+    paused_map: dict[str, dict] | None = None,
+    incluir_mensajes: bool = False,
+    limite_mensajes: int = 200,
+) -> dict:
+    phone_norm = normalizar_numero(phone)
+    historial = cargar_historial(phone_norm)
+    perfil = _leer_perfil_cacheado(phone_norm)
+    paused_entry = (paused_map or {}).get(phone_norm)
+
+    ultimo = historial[-1] if historial else {}
+    ultimo_user = next(
+        (m for m in reversed(historial) if m.get("role") == "user"),
+        {},
+    )
+    consecutive_user = 0
+    for item in reversed(historial):
+        if item.get("role") != "user":
+            break
+        consecutive_user += 1
+
+    nombre = (perfil.get("alias_admin") or "").strip()
+    if not nombre:
+        nombre = (perfil.get("nombre") or "").strip()
+    if not nombre or nombre.lower() == "desconocido":
+        nombre = (perfil.get("negocio") or "").strip()
+    if not nombre or nombre.lower() == "desconocido":
+        nombre = f"+{phone_norm}" if phone_norm else phone
+
+    data = {
+        "phone": phone_norm,
+        "display_name": nombre,
+        "paused": bool(paused_entry),
+        "pause": paused_entry or {},
+        "profile": perfil,
+        "message_count": len(historial),
+        "last_role": ultimo.get("role", ""),
+        "last_text": _texto_corto(ultimo.get("content", "")),
+        "last_ts": ultimo.get("ts", ""),
+        "last_ts_label": _fmt_ts_corto(ultimo.get("ts", "")),
+        "last_user_text": _texto_corto(ultimo_user.get("content", "")),
+        "last_user_ts": ultimo_user.get("ts", ""),
+        "last_user_ts_label": _fmt_ts_corto(ultimo_user.get("ts", "")),
+        "consecutive_user_messages": consecutive_user,
+    }
+
+    if incluir_mensajes:
+        mensajes = historial[-limite_mensajes:] if limite_mensajes > 0 else historial
+        data["messages"] = mensajes
+        data["has_more"] = len(historial) > len(mensajes)
+    return data
+
+
+def _listar_chats_coexistencia(limit: int = 150) -> list[dict]:
+    paused_map = {item["phone"]: item for item in _listar_pausados()}
+    phones: set[str] = set(paused_map.keys())
+
+    for f in CONVERSACIONES_DIR.glob("*.json"):
+        phones.add(f.stem)
+
+    rows = [
+        _resumen_chat_coexistencia(phone, paused_map=paused_map)
+        for phone in phones
+        if phone
+    ]
+    rows.sort(
+        key=lambda item: (
+            item.get("paused", False),
+            _parse_ts_utc(item.get("last_ts", "")) or datetime.min,
+        ),
+        reverse=True,
+    )
+    return rows[:limit]
+
+
+def _coexistencia_dashboard_html(token: str) -> str:
+    token_js = json.dumps(token)
+    return f"""<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MARZ Coexistencia</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: #111831;
+      --panel-2: #161f3f;
+      --line: #27345f;
+      --text: #e9eefc;
+      --muted: #94a3c7;
+      --accent: #58a6ff;
+      --accent-2: #22c55e;
+      --danger: #ef4444;
+      --warn: #f59e0b;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }}
+    .shell {{
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      min-height: 100vh;
+    }}
+    .sidebar, .main {{
+      padding: 18px;
+    }}
+    .sidebar {{
+      border-right: 1px solid var(--line);
+      background: rgba(10, 15, 30, 0.88);
+    }}
+    .title {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 14px;
+    }}
+    h1, h2, h3, p {{ margin: 0; }}
+    .muted {{ color: var(--muted); }}
+    .pill {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .status-on {{ color: #9ae6b4; border-color: rgba(34,197,94,0.4); }}
+    .status-off {{ color: #fca5a5; border-color: rgba(239,68,68,0.4); }}
+    input, textarea, button {{
+      font: inherit;
+    }}
+    input, textarea {{
+      width: 100%;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+    }}
+    button {{
+      background: var(--panel-2);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+    }}
+    button.primary {{ background: rgba(88,166,255,0.18); border-color: rgba(88,166,255,0.45); }}
+    button.success {{ background: rgba(34,197,94,0.16); border-color: rgba(34,197,94,0.35); }}
+    button.warn {{ background: rgba(245,158,11,0.16); border-color: rgba(245,158,11,0.35); }}
+    button:disabled {{ opacity: 0.55; cursor: default; }}
+    .stack {{ display: grid; gap: 10px; }}
+    .chat-list {{
+      margin-top: 12px;
+      display: grid;
+      gap: 8px;
+      max-height: calc(100vh - 140px);
+      overflow: auto;
+      padding-right: 4px;
+    }}
+    .chat-card {{
+      width: 100%;
+      text-align: left;
+      padding: 12px;
+      background: var(--panel);
+    }}
+    .chat-card.active {{ border-color: rgba(88,166,255,0.55); background: rgba(88,166,255,0.12); }}
+    .chat-top {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 6px;
+    }}
+    .chat-name {{ font-weight: 600; }}
+    .chat-phone, .tiny {{
+      font-size: 12px;
+      color: var(--muted);
+    }}
+    .chat-snippet {{
+      font-size: 13px;
+      color: #d6def7;
+      line-height: 1.35;
+    }}
+    .main {{
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      gap: 14px;
+    }}
+    .panel {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px;
+    }}
+    .header-row, .actions {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }}
+    .meta-grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }}
+    .meta-grid div {{
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.04);
+      border-radius: 8px;
+      padding: 10px;
+    }}
+    .thread {{
+      overflow: auto;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+      min-height: 260px;
+      max-height: calc(100vh - 420px);
+    }}
+    .bubble {{
+      max-width: min(78ch, 78%);
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.03);
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }}
+    .bubble.user {{ justify-self: start; }}
+    .bubble.assistant {{ justify-self: end; background: rgba(88,166,255,0.12); }}
+    .bubble.system {{ justify-self: center; max-width: 90%; background: rgba(245,158,11,0.10); }}
+    .bubble .ts {{
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }}
+    .composer {{
+      display: grid;
+      grid-template-columns: 1fr 160px;
+      gap: 10px;
+      align-items: end;
+    }}
+    .notice {{
+      min-height: 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    @media (max-width: 980px) {{
+      .shell {{ grid-template-columns: 1fr; }}
+      .sidebar {{ border-right: 0; border-bottom: 1px solid var(--line); }}
+      .meta-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .composer {{ grid-template-columns: 1fr; }}
+      .thread {{ max-height: 45vh; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="title">
+        <div>
+          <h1>MARZ Coexistencia</h1>
+          <p class="muted">Toma control humano directo sobre el bot.</p>
+        </div>
+        <div id="global-status" class="pill status-off">cargando</div>
+      </div>
+      <div class="stack">
+        <input id="search" type="search" placeholder="Buscar por nombre, alias o número">
+      </div>
+      <div id="chat-list" class="chat-list"></div>
+    </aside>
+    <main class="main">
+      <section class="panel">
+        <div class="header-row">
+          <div>
+            <h2 id="chat-name">Selecciona un chat</h2>
+            <p id="chat-subtitle" class="muted">Aquí vas a ver el hilo y podrás intervenir.</p>
+          </div>
+          <div class="actions">
+            <button id="takeover-btn" class="warn" disabled>Tomar control 60m</button>
+            <button id="release-btn" class="success" disabled>Soltar control</button>
+          </div>
+        </div>
+      </section>
+      <section class="panel meta-grid" id="chat-meta">
+        <div><div class="tiny">Nombre</div><div id="meta-name">-</div></div>
+        <div><div class="tiny">Negocio</div><div id="meta-business">-</div></div>
+        <div><div class="tiny">Interés</div><div id="meta-interest">-</div></div>
+        <div><div class="tiny">Estado</div><div id="meta-state">-</div></div>
+      </section>
+      <section class="panel thread" id="thread"></section>
+      <section class="panel stack">
+        <div class="composer">
+          <textarea id="composer" rows="3" placeholder="Escribe como humano. Al enviar, pausamos el bot para este chat."></textarea>
+          <button id="send-btn" class="primary" disabled>Enviar</button>
+        </div>
+        <div id="notice" class="notice"></div>
+      </section>
+    </main>
+  </div>
+  <script>
+    const token = {token_js};
+    const state = {{
+      chats: [],
+      selectedPhone: "",
+      selectedThread: null,
+      listTimer: null,
+      threadTimer: null,
+    }};
+
+    const $ = (id) => document.getElementById(id);
+    const esc = (value) => {{
+      const div = document.createElement("div");
+      div.textContent = value ?? "";
+      return div.innerHTML;
+    }};
+
+    async function api(path, options = {{}}) {{
+      const headers = Object.assign({{
+        "X-Admin-Token": token,
+      }}, options.headers || {{}});
+      const res = await fetch(path, Object.assign({{}}, options, {{ headers }}));
+      if (!res.ok) {{
+        const text = await res.text();
+        throw new Error(text || `HTTP ${{res.status}}`);
+      }}
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) return res.json();
+      return res.text();
+    }}
+
+    function chatMatches(row, q) {{
+      if (!q) return true;
+      const hay = [
+        row.display_name,
+        row.phone,
+        row.profile?.alias_admin,
+        row.profile?.nombre,
+        row.profile?.negocio,
+        row.profile?.interes,
+      ].join(" ").toLowerCase();
+      return hay.includes(q);
+    }}
+
+    function renderChatList() {{
+      const q = $("search").value.trim().toLowerCase();
+      const rows = state.chats.filter((row) => chatMatches(row, q));
+      $("chat-list").innerHTML = rows.map((row) => {{
+        const paused = row.paused
+          ? `<span class="pill status-on">en mano</span>`
+          : `<span class="pill">bot activo</span>`;
+        const active = row.phone === state.selectedPhone ? "active" : "";
+        const snippet = esc(row.last_text || row.last_user_text || "Sin mensajes");
+        const extra = row.profile?.negocio && row.profile.negocio !== "desconocido"
+          ? esc(row.profile.negocio)
+          : esc(row.profile?.interes || "");
+        return `
+          <button class="chat-card ${{active}}" data-phone="${{esc(row.phone)}}">
+            <div class="chat-top">
+              <div>
+                <div class="chat-name">${{esc(row.display_name)}}</div>
+                <div class="chat-phone">+${{esc(row.phone)}}</div>
+              </div>
+              ${{paused}}
+            </div>
+            <div class="chat-snippet">${{snippet}}</div>
+            <div class="tiny" style="margin-top:8px;">${{extra}}${{extra ? " · " : ""}}${{esc(row.last_ts_label || "")}}</div>
+          </button>
+        `;
+      }}).join("");
+
+      document.querySelectorAll(".chat-card").forEach((btn) => {{
+        btn.addEventListener("click", () => selectChat(btn.dataset.phone || ""));
+      }});
+    }}
+
+    function renderThread() {{
+      const thread = state.selectedThread;
+      const hasThread = !!thread;
+      $("takeover-btn").disabled = !hasThread;
+      $("release-btn").disabled = !hasThread;
+      $("send-btn").disabled = !hasThread;
+      if (!thread) {{
+        $("thread").innerHTML = `<div class="muted">No hay chat seleccionado.</div>`;
+        return;
+      }}
+
+      $("chat-name").textContent = thread.display_name || `+${{thread.phone}}`;
+      $("chat-subtitle").textContent = `+${{thread.phone}}`;
+      $("meta-name").textContent = thread.profile?.alias_admin || thread.profile?.nombre || thread.display_name || "-";
+      $("meta-business").textContent = thread.profile?.negocio || thread.profile?.tipo_negocio || "-";
+      $("meta-interest").textContent = thread.profile?.interes || "-";
+      $("meta-state").textContent = thread.paused
+        ? `Pausado (${{thread.pause?.expires_in_min ?? "?"}} min)`
+        : "Bot activo";
+
+      $("thread").innerHTML = (thread.messages || []).map((msg) => {{
+        const role = msg.role === "user" ? "user" : (msg.role === "assistant" ? "assistant" : "system");
+        const meta = [msg.source, msg.actor, msg.via].filter(Boolean).join(" · ");
+        return `
+          <div class="bubble ${{role}}">
+            <div>${{esc(msg.content || "")}}</div>
+            <div class="ts">${{esc(msg.ts || "")}}${{meta ? " · " + esc(meta) : ""}}</div>
+          </div>
+        `;
+      }}).join("") || `<div class="muted">Sin historial todavía.</div>`;
+
+      $("takeover-btn").textContent = thread.paused ? "Extender control 60m" : "Tomar control 60m";
+      const threadEl = $("thread");
+      threadEl.scrollTop = threadEl.scrollHeight;
+    }}
+
+    async function loadChats(preserveSelection = true) {{
+      try {{
+        const data = await api(`/admin/coexistence/chats?token=${{encodeURIComponent(token)}}`);
+        state.chats = data.chats || [];
+        $("global-status").className = "pill status-on";
+        $("global-status").textContent = `${{state.chats.length}} chats`;
+        renderChatList();
+        if ((!preserveSelection || !state.selectedPhone) && state.chats[0]) {{
+          await selectChat(state.chats[0].phone);
+          return;
+        }}
+        if (state.selectedPhone) {{
+          const stillExists = state.chats.some((row) => row.phone === state.selectedPhone);
+          if (stillExists) {{
+            await loadThread(state.selectedPhone, false);
+          }}
+        }}
+      }} catch (err) {{
+        $("global-status").className = "pill status-off";
+        $("global-status").textContent = "error";
+        $("notice").textContent = `Error cargando chats: ${{err.message}}`;
+      }}
+    }}
+
+    async function loadThread(phone, rerenderList = true) {{
+      if (!phone) return;
+      try {{
+        const data = await api(`/admin/coexistence/thread/${{encodeURIComponent(phone)}}?token=${{encodeURIComponent(token)}}`);
+        state.selectedPhone = data.phone;
+        state.selectedThread = data;
+        if (rerenderList) renderChatList();
+        renderThread();
+      }} catch (err) {{
+        $("notice").textContent = `Error cargando hilo: ${{err.message}}`;
+      }}
+    }}
+
+    async function selectChat(phone) {{
+      await loadThread(phone);
+    }}
+
+    async function postAction(path, payload) {{
+      const data = await api(path, {{
+        method: "POST",
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify(Object.assign({{ token }}, payload)),
+      }});
+      $("notice").textContent = data.message || "Listo.";
+      await loadChats(true);
+      if (state.selectedPhone) {{
+        await loadThread(state.selectedPhone, false);
+      }}
+    }}
+
+    $("search").addEventListener("input", renderChatList);
+    $("takeover-btn").addEventListener("click", async () => {{
+      if (!state.selectedPhone) return;
+      await postAction("/admin/coexistence/takeover", {{
+        phone: state.selectedPhone,
+        minutes: 60,
+      }});
+    }});
+    $("release-btn").addEventListener("click", async () => {{
+      if (!state.selectedPhone) return;
+      await postAction("/admin/coexistence/release", {{
+        phone: state.selectedPhone,
+      }});
+    }});
+    $("send-btn").addEventListener("click", async () => {{
+      if (!state.selectedPhone) return;
+      const text = $("composer").value.trim();
+      if (!text) return;
+      $("send-btn").disabled = true;
+      try {{
+        await postAction("/admin/coexistence/send", {{
+          phone: state.selectedPhone,
+          text,
+          minutes: 60,
+        }});
+        $("composer").value = "";
+      }} finally {{
+        $("send-btn").disabled = false;
+      }}
+    }});
+
+    loadChats(false);
+    state.listTimer = setInterval(() => loadChats(true), 7000);
+  </script>
+</body>
+</html>"""
+
+
 # Tracking de mensajes salientes enviados por el bot vía API. YCloud en modo
 # coexistencia emite webhooks outbound para AMBOS: mensajes de la API y
 # mensajes que Eduardo manda desde la app nativa de WhatsApp Business.
@@ -5125,7 +5722,7 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
                 f"los 3 botones (Sí retomamos / Otro momento / Ya no)."
             )
             return ""
-        from_number = BOT_PHONE or "525631832858"
+        from_number = BOT_PHONE or "525638678463"
         from_e164 = "+" + normalizar_numero(from_number)
         try:
             ok, err = ycloud_enviar_texto(from_e164, phone_e164, cuerpo)
@@ -5160,7 +5757,7 @@ def _ejecutar_comandos_admin(texto: str) -> tuple[str, list[str]]:
                 f"tema. Formato: [CMD_ENVIAR_PLANTILLA: +52... | Nombre | tema pendiente]"
             )
             return ""
-        from_number = BOT_PHONE or "525631832858"
+        from_number = BOT_PHONE or "525638678463"
         from_e164 = "+" + normalizar_numero(from_number)
         contenido_log = f"{nombre_cliente} | {tema_pendiente}"
         try:
@@ -6829,6 +7426,135 @@ def admin_metrics():
             "chats_pausados": pausas,
         },
     })
+
+
+@app.get("/admin/coexistence")
+def admin_coexistence_dashboard():
+    token = _admin_token_desde_request()
+    if not _admin_token_valido():
+        return "forbidden", 403
+    return _coexistencia_dashboard_html(token), 200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+    }
+
+
+@app.get("/admin/coexistence/chats")
+def admin_coexistence_chats():
+    if not _admin_token_valido():
+        return "forbidden", 403
+    limit_raw = request.args.get("limit", "150")
+    try:
+        limit = max(1, min(int(limit_raw), 500))
+    except Exception:
+        limit = 150
+    return jsonify({
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "chats": _listar_chats_coexistencia(limit=limit),
+    })
+
+
+@app.get("/admin/coexistence/thread/<phone>")
+def admin_coexistence_thread(phone: str):
+    if not _admin_token_valido():
+        return "forbidden", 403
+    phone_norm = normalizar_numero(phone)
+    if not phone_norm:
+        return jsonify({"error": "phone inválido"}), 400
+    paused_map = {item["phone"]: item for item in _listar_pausados()}
+    return jsonify(
+        _resumen_chat_coexistencia(
+            phone_norm,
+            paused_map=paused_map,
+            incluir_mensajes=True,
+            limite_mensajes=200,
+        )
+    )
+
+
+@app.post("/admin/coexistence/takeover")
+def admin_coexistence_takeover():
+    if not _admin_token_valido():
+        return "forbidden", 403
+    body = request.get_json(silent=True) or {}
+    phone_norm = normalizar_numero(str(body.get("phone", "") or ""))
+    if not phone_norm:
+        return jsonify({"error": "phone requerido"}), 400
+    try:
+        minutos = int(body.get("minutes", PAUSA_DEFAULT_MIN) or PAUSA_DEFAULT_MIN)
+    except Exception:
+        minutos = PAUSA_DEFAULT_MIN
+    expires = _pausar_chat(phone_norm, minutos=minutos, source="coexistence_dashboard")
+    return jsonify({
+        "ok": True,
+        "phone": phone_norm,
+        "expires_at": expires.isoformat() + "Z",
+        "message": f"Bot pausado para +{phone_norm} por {minutos} min.",
+    })
+
+
+@app.post("/admin/coexistence/release")
+def admin_coexistence_release():
+    if not _admin_token_valido():
+        return "forbidden", 403
+    body = request.get_json(silent=True) or {}
+    phone_norm = normalizar_numero(str(body.get("phone", "") or ""))
+    if not phone_norm:
+        return jsonify({"error": "phone requerido"}), 400
+    existed = _despausar_chat(phone_norm)
+    return jsonify({
+        "ok": True,
+        "phone": phone_norm,
+        "released": existed,
+        "message": (
+            f"Bot reactivado para +{phone_norm}."
+            if existed else
+            f"+{phone_norm} no estaba pausado, pero ya quedó libre."
+        ),
+    })
+
+
+@app.post("/admin/coexistence/send")
+def admin_coexistence_send():
+    if not _admin_token_valido():
+        return "forbidden", 403
+    body = request.get_json(silent=True) or {}
+    phone_norm = normalizar_numero(str(body.get("phone", "") or ""))
+    texto = str(body.get("text", "") or "").strip()
+    if not phone_norm:
+        return jsonify({"error": "phone requerido"}), 400
+    if not texto:
+        return jsonify({"error": "text requerido"}), 400
+
+    try:
+        minutos = int(body.get("minutes", PAUSA_DEFAULT_MIN) or PAUSA_DEFAULT_MIN)
+    except Exception:
+        minutos = PAUSA_DEFAULT_MIN
+
+    _pausar_chat(phone_norm, minutos=minutos, source="coexistence_manual_send")
+    from_e164 = "+" + normalizar_numero(BOT_PHONE or "525638678463")
+    to_e164 = "+" + phone_norm
+    ok, err = ycloud_enviar_texto(from_e164, to_e164, texto)
+    if ok:
+        guardar_mensaje_extendido(
+            phone_norm,
+            "assistant",
+            texto,
+            source="coexistence_manual",
+            actor="eduardo",
+            via="dashboard",
+        )
+        return jsonify({
+            "ok": True,
+            "phone": phone_norm,
+            "message": f"Mensaje enviado a +{phone_norm}. Bot pausado {minutos} min.",
+        })
+    return jsonify({
+        "ok": False,
+        "phone": phone_norm,
+        "error": err or "falló el envío",
+        "message": f"No se pudo enviar a +{phone_norm}: {err or 'falló el envío'}",
+    }), 502
 
 
 @app.get("/admin/backup-list")

@@ -239,6 +239,64 @@ class TestPausas(unittest.TestCase):
         agente._despausar_chat(phone)
 
 
+class TestCoexistencia(unittest.TestCase):
+    def setUp(self):
+        self.phone = "525577770000"
+        self.conv_path = agente.CONVERSACIONES_DIR / f"{self.phone}.json"
+        self.perfil_path = agente.PERFILES_DIR / f"{self.phone}.json"
+        for path in (self.conv_path, self.perfil_path):
+            if path.exists():
+                path.unlink()
+        try:
+            agente._despausar_chat(self.phone)
+        except Exception:
+            pass
+
+    def tearDown(self):
+        for path in (self.conv_path, self.perfil_path):
+            if path.exists():
+                path.unlink()
+        try:
+            agente._despausar_chat(self.phone)
+        except Exception:
+            pass
+
+    def test_resumen_chat_coexistencia_usa_cache_y_metadatos(self):
+        agente.guardar_mensaje_extendido(
+            self.phone, "user", "Hola, necesito info", source="meta"
+        )
+        agente.guardar_mensaje_extendido(
+            self.phone,
+            "assistant",
+            "Claro, con gusto le ayudo.",
+            source="coexistence_manual",
+            actor="eduardo",
+            via="dashboard",
+        )
+        self.perfil_path.write_text(
+            '{"alias_admin":"MARZ Lead","negocio":"Taller Demo","interes":"bot de WhatsApp"}',
+            encoding="utf-8",
+        )
+        agente._pausar_chat(self.phone, minutos=10, source="test")
+
+        paused_map = {
+            item["phone"]: item
+            for item in agente._listar_pausados()
+        }
+        resumen = agente._resumen_chat_coexistencia(
+            self.phone,
+            paused_map=paused_map,
+            incluir_mensajes=True,
+        )
+
+        self.assertEqual(resumen["display_name"], "MARZ Lead")
+        self.assertTrue(resumen["paused"])
+        self.assertEqual(resumen["profile"]["negocio"], "Taller Demo")
+        self.assertEqual(len(resumen["messages"]), 2)
+        self.assertEqual(resumen["messages"][-1]["actor"], "eduardo")
+        self.assertEqual(resumen["messages"][-1]["via"], "dashboard")
+
+
 class TestBotSentTracking(unittest.TestCase):
     def test_por_prefijo(self):
         ext_id = f"{agente._BOT_SENT_PREFIX}abc123"
