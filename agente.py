@@ -7865,10 +7865,13 @@ def webhook_receive():
     try:
         raw_body_bytes = request.get_data(cache=True) or b""
         raw_body = raw_body_bytes.decode("utf-8", errors="replace")
-        log.info(
-            "[WEBHOOK] payload recibido: %s",
-            _redactar_secrets(raw_body)[:2000],
-        )
+        if AKNA_WHATSAPP_FORWARD_URL or AKNA_WHATSAPP_FORWARD_SECRET:
+            log.info("[WEBHOOK] payload recibido para enrutamiento")
+        else:
+            log.info(
+                "[WEBHOOK] payload recibido: %s",
+                _redactar_secrets(raw_body)[:2000],
+            )
         data = request.get_json(silent=True)
         if data is None:
             log.warning("[WEBHOOK] JSON inválido o vacío")
