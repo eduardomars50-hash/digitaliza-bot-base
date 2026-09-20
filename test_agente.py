@@ -11,6 +11,9 @@ Salida esperada: todos los tests en verde + "OK".
 """
 
 import os
+import hashlib
+import hmac
+import json
 import sys
 import tempfile
 import unittest
@@ -357,6 +360,66 @@ class TestMetaCloudAPI(unittest.TestCase):
             "text": {"body": "hola"},
         }
         self.assertIsNone(agente._mensaje_meta_a_interno(message, value))
+
+    def test_meta_webhook_can_forward_exclusively_to_akna(self):
+        old_url = agente.AKNA_WHATSAPP_FORWARD_URL
+        old_secret = agente.AKNA_WHATSAPP_FORWARD_SECRET
+        old_post = agente.requests.post
+        calls = []
+
+        class Resp:
+            status_code = 200
+
+        def fake_post(url, data=None, headers=None, timeout=None):
+            calls.append((url, data, headers, timeout))
+            return Resp()
+
+        try:
+            agente.AKNA_WHATSAPP_FORWARD_URL = "https://akna.example/webhooks/whatsapp"
+            agente.AKNA_WHATSAPP_FORWARD_SECRET = "shared-secret"
+            agente.requests.post = fake_post
+            payload = {
+                "object": "whatsapp_business_account",
+                "entry": [{"changes": [{"value": {"messages": []}}]}],
+            }
+            raw = json.dumps(payload).encode()
+
+            forwarded = agente._reenviar_payload_meta_a_akna(raw)
+
+            self.assertTrue(forwarded)
+            self.assertEqual(len(calls), 1)
+            url, body, headers, timeout = calls[0]
+            expected = hmac.new(b"shared-secret", raw, hashlib.sha256).hexdigest()
+            self.assertEqual(url, "https://akna.example/webhooks/whatsapp")
+            self.assertEqual(body, raw)
+            self.assertEqual(headers["X-Hub-Signature-256"], f"sha256={expected}")
+            self.assertEqual(timeout, 10)
+        finally:
+            agente.AKNA_WHATSAPP_FORWARD_URL = old_url
+            agente.AKNA_WHATSAPP_FORWARD_SECRET = old_secret
+            agente.requests.post = old_post
+
+    def test_meta_webhook_returns_retryable_error_when_akna_is_unavailable(self):
+        old_url = agente.AKNA_WHATSAPP_FORWARD_URL
+        old_secret = agente.AKNA_WHATSAPP_FORWARD_SECRET
+        old_post = agente.requests.post
+
+        class Resp:
+            status_code = 503
+
+        try:
+            agente.AKNA_WHATSAPP_FORWARD_URL = "https://akna.example/webhooks/whatsapp"
+            agente.AKNA_WHATSAPP_FORWARD_SECRET = "shared-secret"
+            agente.requests.post = lambda *args, **kwargs: Resp()
+            raw = json.dumps(
+                {"object": "whatsapp_business_account", "entry": []}
+            ).encode()
+
+            self.assertFalse(agente._reenviar_payload_meta_a_akna(raw))
+        finally:
+            agente.AKNA_WHATSAPP_FORWARD_URL = old_url
+            agente.AKNA_WHATSAPP_FORWARD_SECRET = old_secret
+            agente.requests.post = old_post
 
     def test_meta_send_text_payload(self):
         agente.WHATSAPP_ACCESS_TOKEN = "dummy_token_no_real"

@@ -6,6 +6,8 @@ Transcripción de audio: Groq Whisper large-v3.
 """
 
 import os
+import hashlib
+import hmac
 import io
 import re
 import json
@@ -43,6 +45,8 @@ WHATSAPP_ACCESS_TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_WABA_ID = os.environ.get("WHATSAPP_WABA_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.environ.get("WHATSAPP_VERIFY_TOKEN", "")
+AKNA_WHATSAPP_FORWARD_URL = os.environ.get("AKNA_WHATSAPP_FORWARD_URL", "").strip()
+AKNA_WHATSAPP_FORWARD_SECRET = os.environ.get("AKNA_WHATSAPP_FORWARD_SECRET", "").strip()
 META_GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "v25.0").strip() or "v25.0"
 if not META_GRAPH_VERSION.startswith("v"):
     META_GRAPH_VERSION = f"v{META_GRAPH_VERSION}"
@@ -7608,6 +7612,40 @@ def _es_payload_meta_whatsapp(data) -> bool:
     )
 
 
+def _reenviar_payload_meta_a_akna(raw_body: bytes) -> bool:
+    """Entrega el webhook a AKNA y sólo confirma cuando quedó persistido allá."""
+    if not AKNA_WHATSAPP_FORWARD_URL or not AKNA_WHATSAPP_FORWARD_SECRET:
+        return False
+    if not AKNA_WHATSAPP_FORWARD_URL.startswith("https://"):
+        log.error("[AKNA FORWARD] URL inválida; debe usar HTTPS")
+        return False
+
+    signature = hmac.new(
+        AKNA_WHATSAPP_FORWARD_SECRET.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    try:
+        response = requests.post(
+            AKNA_WHATSAPP_FORWARD_URL,
+            data=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": f"sha256={signature}",
+            },
+            timeout=10,
+        )
+    except requests.RequestException as exc:
+        log.warning("[AKNA FORWARD] error de red (%s)", type(exc).__name__)
+        return False
+
+    if not 200 <= response.status_code < 300:
+        log.warning("[AKNA FORWARD] destino respondió HTTP %s", response.status_code)
+        return False
+    log.info("[AKNA FORWARD] webhook entregado")
+    return True
+
+
 def _meta_phone_number_id_aceptado(phone_number_id: str) -> bool:
     if not WHATSAPP_PHONE_NUMBER_ID:
         return True
@@ -7825,7 +7863,8 @@ def _procesar_eventos_webhook(eventos: list) -> None:
 @app.post("/webhook")
 def webhook_receive():
     try:
-        raw_body = request.get_data(as_text=True) or ""
+        raw_body_bytes = request.get_data(cache=True) or b""
+        raw_body = raw_body_bytes.decode("utf-8", errors="replace")
         log.info(
             "[WEBHOOK] payload recibido: %s",
             _redactar_secrets(raw_body)[:2000],
@@ -7836,6 +7875,10 @@ def webhook_receive():
             return jsonify({"received": True}), 200
 
         if _es_payload_meta_whatsapp(data):
+            if AKNA_WHATSAPP_FORWARD_URL or AKNA_WHATSAPP_FORWARD_SECRET:
+                if _reenviar_payload_meta_a_akna(raw_body_bytes):
+                    return jsonify({"received": True, "forwarded": "akna"}), 200
+                return jsonify({"received": False, "forwarded": "failed"}), 503
             threading.Thread(
                 target=_procesar_payload_meta, args=(data,), daemon=True
             ).start()
